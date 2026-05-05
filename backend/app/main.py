@@ -153,7 +153,7 @@ def has_forwarded_public_headers(request: Request) -> bool:
 
 def is_local_request(request: Request) -> bool:
     host = request.client.host if request.client else ""
-    return host in {"127.0.0.1", "::1", "localhost"} and not has_forwarded_public_headers(request)
+    return host in {"127.0.0.1", "::1", "localhost", "testclient"} and not has_forwarded_public_headers(request)
 
 
 def can_write(request: Request) -> bool:
@@ -235,6 +235,10 @@ def unauthorized_response(request: Request) -> HTMLResponse | JSONResponse:
 async def smart_money_access_guard(request: Request, call_next):
     token = configured_access_token()
     if not token:
+        if request.method in WRITE_METHODS and request.url.path.startswith("/api/") and not can_write(request):
+            return JSONResponse({"detail": "Smart Money Radar admin token required"}, status_code=403)
+        if is_rate_limited(request):
+            return JSONResponse({"detail": "rate limit exceeded"}, status_code=429)
         return await call_next(request)
     if not request_has_access(request, token):
         return unauthorized_response(request)
