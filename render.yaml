@@ -2,11 +2,14 @@ services:
   - type: web
     name: smart-money-radar-tw
     runtime: python
+    rootDir: backend
     plan: free
-    buildCommand: "pip install -r backend/requirements.txt"
-    startCommand: "cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
     healthCheckPath: /render-health
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
       - key: SMART_MONEY_CORS_ORIGINS
         value: "*"
       - key: SMART_MONEY_ACCESS_TOKEN
