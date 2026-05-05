@@ -28,6 +28,13 @@ from app.storage.repository import repo
 FORMAL_SOURCE_STATUSES = {"official_full", "official_intraday"}
 
 
+async def run_startup_scan() -> None:
+    try:
+        await asyncio.to_thread(repo.scan)
+    except Exception as exc:
+        print(f"startup scan failed: {type(exc).__name__}: {exc}", flush=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_scan_job(repo.scan, repo.settings.scan_interval_minutes)
@@ -43,7 +50,7 @@ async def lifespan(app: FastAPI):
     if not scheduler.running:
         scheduler.start()
     if repo.last_scan_at is None:
-        await asyncio.to_thread(repo.scan)
+        asyncio.create_task(run_startup_scan())
     try:
         yield
     finally:
