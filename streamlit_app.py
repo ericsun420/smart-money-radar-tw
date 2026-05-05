@@ -104,10 +104,13 @@ def get_repo() -> InMemoryRepository:
 def scan_market() -> dict:
     repo = get_repo()
     repo.scan()
+    all_topics = [topic.model_dump(mode="json") for topic in repo.topic_flows.values()]
     return {
         "market": repo.market_flow().model_dump(mode="json"),
         "rankings": repo.rankings(),
         "dashboard": repo.dashboard(),
+        "topics": all_topics,
+        "stock_names": {code: snapshot.name for code, snapshot in repo.snapshots.items()},
         "health": {
             "last_scan_at": repo.last_scan_at.isoformat() if repo.last_scan_at else None,
             "debug": repo.latest_scan_debug().model_dump(mode="json") if repo.latest_scan_debug() else None,
@@ -125,10 +128,47 @@ def topic_detail(topic_name: str) -> dict | None:
     return repo.topic_detail(topic_name)
 
 
+def as_row(item) -> dict:
+    return item.model_dump(mode="json") if hasattr(item, "model_dump") else dict(item)
+
+
+def topic_net(row: dict) -> float:
+    return float(row.get("topic_net_proxy_amount") or row.get("net_yi") or 0)
+
+
+def topic_rows_for_rank(rankings: dict, all_topics: list[dict], key: str, *, want_outflow: bool, limit: int = 5) -> list[dict]:
+    rows = [as_row(item) for item in rankings.get(key, [])]
+    used = {row.get("topic_name") for row in rows}
+
+    if len(rows) < limit:
+        candidates = sorted(
+            [as_row(topic) for topic in all_topics if topic.get("topic_name") not in used],
+            key=topic_net,
+            reverse=not want_outflow,
+        )
+        if want_outflow:
+            preferred = [row for row in candidates if topic_net(row) < 0]
+            fallback = [row for row in candidates if topic_net(row) >= 0]
+            candidates = [*preferred, *fallback]
+        else:
+            preferred = [row for row in candidates if topic_net(row) > 0]
+            fallback = [row for row in candidates if topic_net(row) <= 0]
+            candidates = [*preferred, *fallback]
+        rows.extend(candidates[: max(0, limit - len(rows))])
+    return rows[:limit]
+
+
+def stock_label(code: str | None, stock_names: dict[str, str]) -> str:
+    if not code:
+        return "-"
+    name = stock_names.get(str(code), "")
+    return f"{code} {name}" if name else str(code)
+
+
 def row_table(rows: list, *, amount_key: str = "display_signed_flow_yi", limit: int = 10):
     payload = []
     for index, item in enumerate(rows[:limit], start=1):
-        row = item.model_dump(mode="json") if hasattr(item, "model_dump") else dict(item)
+        row = as_row(item)
         amount = row.get(amount_key)
         if amount_key in {"relative_flow_pct", "sector_strength_pct"}:
             amount_text = f"{float(amount or 0):.1f}%"
@@ -138,7 +178,7 @@ def row_table(rows: list, *, amount_key: str = "display_signed_flow_yi", limit: 
             {
                 "排名": index,
                 "代號": row.get("code"),
-                "名稱": row.get("name"),
+                "名稱": row.get("name") or row.get("stock_name") or "-",
                 "題材": row.get("primary_theme") or row.get("display_group") or (row.get("topics") or ["-"])[0],
                 "方向": row.get("flow_label") or direction_text(row.get("direction")),
                 "金額": amount_text,
@@ -157,14 +197,19 @@ def topic_rank(title: str, rows: list, *, limit: int = 5):
         st.caption("暫無符合條件的題材")
         return
     for index, item in enumerate(rows[:limit], start=1):
-        row = item.model_dump(mode="json") if hasattr(item, "model_dump") else dict(item)
+        row = as_row(item)
         direction = row.get("direction")
         color = direction_color(direction)
+        net = topic_net(row)
+        if net < 0:
+            color = "green"
+        elif net > 0:
+            color = "red"
         st.markdown(
             f"""
             <div class="radar-card">
               <b>{index}. {row.get("topic_name")}</b>
-              <span class="{color}" style="float:right">{yi(row.get("topic_net_proxy_amount") or row.get("net_yi"))}　⚡ {row.get("radar_score", 0)}</span>
+              <span class="{color}" style="float:right">{yi(net)}　⚡ {row.get("radar_score", row.get("signal_score", 0))}</span>
               <div class="muted">流入 {yi(row.get("inflow_yi"), False)}｜流出 {yi(row.get("outflow_yi"), False)}｜強/弱 {row.get("strong_stock_count", 0)}/{row.get("weak_stock_count", 0)}</div>
             </div>
             """,
@@ -175,6 +220,8 @@ def topic_rank(title: str, rows: list, *, limit: int = 5):
 def render_dashboard(data: dict):
     market = data["market"]
     rankings = data["rankings"]
+    all_topics = data.get("topics", [])
+    stock_names = data.get("stock_names", {})
     health = data["health"]
     debug = health.get("debug") or {}
 
@@ -191,11 +238,13 @@ def render_dashboard(data: dict):
 
     st.divider()
     st.header("類股雷達掃描")
+    topic_inflow_rows = topic_rows_for_rank(rankings, all_topics, "topic_inflow_top50", want_outflow=False, limit=5)
+    topic_outflow_rows = topic_rows_for_rank(rankings, all_topics, "topic_outflow_top50", want_outflow=True, limit=5)
     left, right = st.columns(2)
     with left:
-        topic_rank("資金流入 TOP5", rankings.get("topic_inflow_top50", []), limit=5)
+        topic_rank("資金流入 TOP5", topic_inflow_rows, limit=5)
     with right:
-        topic_rank("資金流出 TOP5", rankings.get("topic_outflow_top50", []), limit=5)
+        topic_rank("資金流出 TOP5", topic_outflow_rows, limit=5)
 
     st.divider()
     st.header("每日資金排行榜")
@@ -215,13 +264,15 @@ def render_dashboard(data: dict):
     if not signals:
         st.caption("目前沒有新的資金異動提醒。")
     for signal in signals[:20]:
-        row = signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal)
+        row = as_row(signal)
         color = direction_color(row.get("direction"))
+        target = row.get("target_id")
+        title = stock_label(target, stock_names) if row.get("target_type") == "stock" else str(target or "-")
         st.markdown(
             f"""
             <div class="radar-card">
               <span class="chip">{level_text(row.get("signal_level"))}</span>
-              <b>{row.get("target_id")}</b>
+              <b>{title}</b>
               <span class="{color}"> {direction_text(row.get("direction"))}｜資金熱度 ⚡ {row.get("score", 0)}</span>
               <div class="muted">時間 {row.get("timestamp")}｜題材淨額 {yi(row.get("net_yi"))}｜較上輪 {yi(row.get("delta_from_previous_yi"))}</div>
             </div>
@@ -258,7 +309,7 @@ def render_search():
         st.caption("今日尚無資金異動。")
         return
     for card in cards[:30]:
-        row = card.model_dump(mode="json") if hasattr(card, "model_dump") else dict(card)
+        row = as_row(card)
         color = direction_color(row.get("direction"))
         with st.expander(f"{row.get('topic_name')}｜{level_text(row.get('signal_level'))}｜{direction_text(row.get('direction'))}｜{row.get('timestamp')}"):
             st.markdown(
@@ -274,7 +325,7 @@ def render_search():
                 st.write("影響力 TOP5 個股")
                 table = []
                 for index, impact in enumerate(impacts, start=1):
-                    item = impact if isinstance(impact, dict) else impact.model_dump(mode="json")
+                    item = as_row(impact)
                     table.append(
                         {
                             "排名": index,
@@ -312,4 +363,3 @@ if page == "資金流向":
     render_dashboard(payload)
 else:
     render_search()
-
