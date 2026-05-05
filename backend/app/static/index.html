@@ -1,0 +1,74 @@
+﻿<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Smart Money Radar 台股即時資金雷達</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20260430-3037" />
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <div>
+        <h1>Smart Money Radar</h1>
+        <p>台股即時資金雷達 App</p>
+        <p id="updated">載入中...</p>
+      </div>
+      <button id="refresh" class="icon" title="重新整理">↻</button>
+    </header>
+
+    <nav class="tabs">
+      <button class="active" data-tab="dashboard">資金流向</button>
+      <button data-tab="search">個股資金查詢</button>
+      <button data-tab="settings">設定</button>
+    </nav>
+
+    <section id="dashboard" class="tab-panel">
+      <label class="filter"><input id="officialOnly" type="checkbox" /> 只看正式資料</label>
+      <div id="overview"></div>
+      <div id="rankings"></div>
+      <div id="signals"></div>
+    </section>
+
+    <section id="search" class="tab-panel hidden">
+      <h2>個股資金查詢</h2>
+      <form id="stockForm" class="searchbar">
+        <input id="stockCode" placeholder="請輸入股票代號或名稱" />
+        <button>查詢</button>
+      </form>
+      <div id="stockResult"><section class="card empty">請輸入股票代號或名稱，查看今日所屬題材與資金異動。</section></div>
+    </section>
+
+    <section id="settings" class="tab-panel hidden">
+      <h2>設定</h2>
+      <div class="settings">
+        <label>自動刷新 <input id="autoRefresh" type="checkbox" /></label>
+        <label>掃描間隔（分鐘） <input id="scanInterval" type="number" value="5" /></label>
+        <label>題材最小淨額門檻（億） <input id="topicMinNet" type="number" value="5" /></label>
+        <label>個股最小成交額門檻（億） <input id="stockMinValue" type="number" value="1" /></label>
+        <label>只顯示正式資料 <input id="onlyOfficialFull" type="checkbox" /></label>
+        <label>顯示技術警告 <input id="showCacheWarning" type="checkbox" /></label>
+        <label>推播 Webhook URL <input id="webhook" placeholder="只在儲存時送出，不會明碼回傳" /></label>
+        <label>推播 Webhook 狀態 <input id="webhookMasked" disabled /></label>
+        <label>智慧推播提醒 <input id="pushEnabled" type="checkbox" /></label>
+      </div>
+      <button id="saveSettings" class="primary">儲存設定</button>
+      <button id="testDiscord" class="primary">測試推播</button>
+      <button id="flushDiscord" class="primary">處理推播佇列</button>
+      <pre id="settingsMessage"></pre>
+    </section>
+  </main>
+
+  <div id="sheet" class="sheet-backdrop hidden">
+    <section class="sheet">
+      <button id="closeSheet" class="close">×</button>
+      <div id="sheetBody"></div>
+    </section>
+  </div>
+  <script src="/static/app.js?v=20260430-3037"></script>
+</body>
+</html>
+
+
+
+
