@@ -12,6 +12,11 @@ from app.time_utils import TAIPEI_TZ, ensure_taipei, market_date, taipei_now
 
 TWSE_MIS_URL = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
 DEFAULT_CHUNK_SIZE = 80
+MIS_HEADERS = {
+    "User-Agent": "Mozilla/5.0 SmartMoneyRadar/1.0",
+    "Accept": "application/json,text/plain,*/*",
+    "Referer": "https://mis.twse.com.tw/stock/index.jsp",
+}
 
 
 def _chunked(items: list[StockSnapshot], size: int) -> list[list[StockSnapshot]]:
@@ -121,7 +126,11 @@ async def fetch_mis_quotes_for_snapshots(
                 for snapshot in chunk
             )
             try:
-                response = await client.get(TWSE_MIS_URL, params={"ex_ch": ex_ch, "json": 1, "delay": 0})
+                response = await client.get(
+                    TWSE_MIS_URL,
+                    params={"ex_ch": ex_ch, "json": 1, "delay": 0},
+                    headers=MIS_HEADERS,
+                )
                 response.raise_for_status()
                 payload = response.json()
             except Exception as exc:

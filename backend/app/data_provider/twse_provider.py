@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import csv
 from datetime import datetime
+from io import StringIO
 
 import httpx
 
@@ -9,6 +11,12 @@ from app.time_utils import ensure_taipei, market_date
 
 
 TWSE_STOCK_DAY_ALL = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+TWSE_STOCK_DAY_ALL_CSV = "https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=open_data"
+HTTP_HEADERS = {
+    "User-Agent": "Mozilla/5.0 SmartMoneyRadar/1.0",
+    "Accept": "application/json,text/csv,text/plain,*/*",
+    "Referer": "https://www.twse.com.tw/",
+}
 
 
 def parse_number(value) -> float:
@@ -28,11 +36,40 @@ def parse_change(value) -> float:
         return 0.0
 
 
+def _normalize_twse_csv_row(row: dict) -> dict:
+    return {
+        "Code": row.get("證券代號"),
+        "Name": row.get("證券名稱"),
+        "TradeVolume": row.get("成交股數"),
+        "TradeValue": row.get("成交金額"),
+        "OpeningPrice": row.get("開盤價"),
+        "HighestPrice": row.get("最高價"),
+        "LowestPrice": row.get("最低價"),
+        "ClosingPrice": row.get("收盤價"),
+        "Change": row.get("漲跌價差"),
+        "Industry": "Unclassified",
+    }
+
+
 async def fetch_twse_daily_all(timeout: float = 12) -> list[dict]:
+    errors: list[str] = []
     async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.get(TWSE_STOCK_DAY_ALL)
+        try:
+            response = await client.get(TWSE_STOCK_DAY_ALL, headers=HTTP_HEADERS)
+            response.raise_for_status()
+            data = response.json()
+            if isinstance(data, list):
+                return data
+            errors.append("openapi_not_list")
+        except Exception as exc:
+            errors.append(f"openapi:{type(exc).__name__}")
+
+        response = await client.get(TWSE_STOCK_DAY_ALL_CSV, headers=HTTP_HEADERS)
         response.raise_for_status()
-        return response.json()
+        rows = list(csv.DictReader(StringIO(response.text)))
+        if not rows:
+            raise RuntimeError(";".join([*errors, "csv_empty"]))
+        return [_normalize_twse_csv_row(row) for row in rows]
 
 
 def normalize_twse_row(row: dict, *, now: datetime) -> StockSnapshot | None:
