@@ -11,7 +11,13 @@ from app.time_utils import ensure_taipei, market_date
 
 
 TWSE_STOCK_DAY_ALL = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
-TWSE_STOCK_DAY_ALL_CSV = "https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=open_data"
+TWSE_STOCK_DAY_ALL_JSON_CANDIDATES = [
+    "https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY_ALL?response=json",
+    "https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=json",
+]
+TWSE_STOCK_DAY_ALL_CSV_CANDIDATES = [
+    "https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=open_data",
+]
 HTTP_HEADERS = {
     "User-Agent": "Mozilla/5.0 SmartMoneyRadar/1.0",
     "Accept": "application/json,text/csv,text/plain,*/*",
@@ -51,6 +57,19 @@ def _normalize_twse_csv_row(row: dict) -> dict:
     }
 
 
+def _normalize_twse_json_record(fields: list[str], values: list) -> dict:
+    row = dict(zip(fields, values))
+    return _normalize_twse_csv_row(row)
+
+
+def _http_error_label(prefix: str, exc: Exception) -> str:
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None)
+    if status_code:
+        return f"{prefix}:HTTPStatusError:{status_code}"
+    return f"{prefix}:{type(exc).__name__}"
+
+
 async def fetch_twse_daily_all(timeout: float = 12) -> list[dict]:
     errors: list[str] = []
     async with httpx.AsyncClient(timeout=timeout) as client:
@@ -62,14 +81,33 @@ async def fetch_twse_daily_all(timeout: float = 12) -> list[dict]:
                 return data
             errors.append("openapi_not_list")
         except Exception as exc:
-            errors.append(f"openapi:{type(exc).__name__}")
+            errors.append(_http_error_label("openapi", exc))
 
-        response = await client.get(TWSE_STOCK_DAY_ALL_CSV, headers=HTTP_HEADERS)
-        response.raise_for_status()
-        rows = list(csv.DictReader(StringIO(response.text)))
-        if not rows:
-            raise RuntimeError(";".join([*errors, "csv_empty"]))
-        return [_normalize_twse_csv_row(row) for row in rows]
+        for url in TWSE_STOCK_DAY_ALL_JSON_CANDIDATES:
+            try:
+                response = await client.get(url, headers=HTTP_HEADERS)
+                response.raise_for_status()
+                payload = response.json()
+                fields = payload.get("fields") if isinstance(payload, dict) else None
+                records = payload.get("data") if isinstance(payload, dict) else None
+                if fields and isinstance(records, list):
+                    return [_normalize_twse_json_record(fields, values) for values in records]
+                errors.append(f"json_unexpected_shape:{url}")
+            except Exception as exc:
+                errors.append(_http_error_label(f"json:{url}", exc))
+
+        for url in TWSE_STOCK_DAY_ALL_CSV_CANDIDATES:
+            try:
+                response = await client.get(url, headers=HTTP_HEADERS)
+                response.raise_for_status()
+                rows = list(csv.DictReader(StringIO(response.text)))
+                if rows:
+                    return [_normalize_twse_csv_row(row) for row in rows]
+                errors.append(f"csv_empty:{url}")
+            except Exception as exc:
+                errors.append(_http_error_label(f"csv:{url}", exc))
+
+    raise RuntimeError(";".join(errors) or "twse_daily_all_unavailable")
 
 
 def normalize_twse_row(row: dict, *, now: datetime) -> StockSnapshot | None:
