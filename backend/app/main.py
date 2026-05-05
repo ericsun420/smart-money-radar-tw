@@ -233,6 +233,8 @@ def unauthorized_response(request: Request) -> HTMLResponse | JSONResponse:
 
 @app.middleware("http")
 async def smart_money_access_guard(request: Request, call_next):
+    if request.url.path == "/render-health":
+        return await call_next(request)
     token = configured_access_token()
     if not token:
         if request.method in WRITE_METHODS and request.url.path.startswith("/api/") and not can_write(request):
@@ -276,3 +278,8 @@ async def smart_money_access_guard(request: Request, call_next):
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse("app/static/index.html")
+
+
+@app.get("/render-health")
+def render_health() -> dict[str, str]:
+    return {"ok": "true"}
