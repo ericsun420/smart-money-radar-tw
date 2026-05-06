@@ -178,11 +178,18 @@ def seed_provider_result() -> ProviderResult:
 
 
 def fetch_market_snapshots(*, allow_seed_fallback: bool = False, min_official_count: int = 1500) -> ProviderResult:
+    prefer_mcp = os.getenv("SMART_MONEY_PREFER_MCP_PROXY", "1").strip().lower() not in {"0", "false", "no"}
+    mcp_enabled = os.getenv("SMART_MONEY_ENABLE_MCP_PROXY", "1").strip().lower() not in {"0", "false", "no"}
+    if prefer_mcp and mcp_enabled:
+        mcp = fetch_mcp_proxy_snapshots()
+        if len(mcp.snapshots) >= min_official_count:
+            return mcp
+
     official = fetch_official_snapshots()
     official_has_twse = official.twse_count > 0
     if len(official.snapshots) >= min_official_count and official_has_twse:
         return official
-    if os.getenv("SMART_MONEY_ENABLE_MCP_PROXY", "1").strip().lower() not in {"0", "false", "no"}:
+    if mcp_enabled:
         mcp = fetch_mcp_proxy_snapshots()
         if len(mcp.snapshots) >= min_official_count:
             mcp.errors = [

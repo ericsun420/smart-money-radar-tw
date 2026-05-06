@@ -19,9 +19,14 @@ def infer_direction(
     *,
     min_value_delta_yi: float,
 ) -> StockFlow:
-    prev_price = previous.price if previous else current.previous_close
-    prev_value = previous.trade_value_yi if previous else 0
-    prev_volume = previous.volume if previous else 0
+    # The MCP quote proxy is the canonical cloud/mobile observation source. It
+    # may run on multiple independent instances, so direction must not depend on
+    # each instance's in-memory previous snapshot or local and cloud dashboards
+    # will disagree for the same quote time.
+    use_quote_baseline = current.realtime_provider == "twse_mcp_proxy"
+    prev_price = current.previous_close if use_quote_baseline else previous.price if previous else current.previous_close
+    prev_value = 0 if use_quote_baseline else previous.trade_value_yi if previous else 0
+    prev_volume = 0 if use_quote_baseline else previous.volume if previous else 0
     price_delta = current.price - prev_price
     value_delta_yi = max(current.trade_value_yi - prev_value, 0)
     volume_delta = current.volume - prev_volume
