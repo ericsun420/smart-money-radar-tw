@@ -40,6 +40,20 @@ async function postJson(path, body = {}) {
   return response.json();
 }
 
+function setRefreshBusy(isBusy) {
+  const button = $("refresh");
+  button.disabled = isBusy;
+  button.classList.toggle("spinning", isBusy);
+  button.textContent = isBusy ? "…" : "↻";
+}
+
+function setRefreshStatus(message, tone = "") {
+  const target = $("refreshStatus");
+  if (!target) return;
+  target.textContent = message || "";
+  target.className = `refresh-status ${tone}`.trim();
+}
+
 function previousChangeText(value, direction) {
   const amount = Number(value || 0);
   if (!amount) return "";
@@ -180,6 +194,29 @@ async function loadDashboard() {
   }
 }
 
+async function refreshNow() {
+  setRefreshBusy(true);
+  setRefreshStatus("同步中，正在重新讀取最新資金資料...");
+  let scanMessage = "";
+  try {
+    try {
+      await postJson("/api/scan/run");
+      scanMessage = "已完成手動掃描";
+    } catch (error) {
+      scanMessage = "已重新載入最新畫面";
+    }
+    await loadDashboard();
+    const health = await getJson("/api/health");
+    const dataTime = health.market_data_time ? `資料時間 ${timeText(health.market_data_time)}` : "資料時間 -";
+    const nextTime = health.scheduler_next_run_time ? `下一輪 ${timeText(health.scheduler_next_run_time)}` : "";
+    setRefreshStatus(`${scanMessage}，${dataTime}${nextTime ? `，${nextTime}` : ""}。`, "ok");
+  } catch (error) {
+    setRefreshStatus(`刷新失敗：${error?.message || error}`, "error");
+  } finally {
+    setRefreshBusy(false);
+  }
+}
+
 function stockSignalCard(signal) {
   const price = signal.price ?? "-";
   const deltaText = previousChangeText(signal.previous_delta_proxy_amount, signal.direction);
@@ -296,7 +333,7 @@ document.querySelectorAll(".tabs button").forEach((button) => {
   };
 });
 
-$("refresh").onclick = loadDashboard;
+$("refresh").onclick = refreshNow;
 $("officialOnly").onchange = loadDashboard;
 $("backToDashboard").onclick = () => showTab("dashboard");
 $("stockForm").onsubmit = (event) => {
