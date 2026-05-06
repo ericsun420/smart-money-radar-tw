@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
+from app.data_provider.mcp_realtime_provider import fetch_mcp_realtime_quotes
 from app.data_provider.seed_data import build_seed_snapshots
+from app.data_provider.static_universe_provider import load_static_universe
 from app.data_provider.stock_universe import filter_common_stocks
 from app.data_provider.theme_mapping import apply_theme_mappings
 from app.data_provider.tpex_provider import fetch_tpex_daily_all, normalize_tpex_row
@@ -121,6 +124,26 @@ def fetch_official_snapshots() -> ProviderResult:
             loop.close()
 
 
+def fetch_mcp_proxy_snapshots() -> ProviderResult:
+    base = load_static_universe()
+    if not base:
+        return ProviderResult(
+            snapshots=[],
+            source_used="twse_mcp_realtime_proxy",
+            source_status="failed",
+            source_ts=taipei_now(),
+            errors=["static_universe_empty"],
+        )
+    try:
+        return asyncio.run(fetch_mcp_realtime_quotes(base))
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(fetch_mcp_realtime_quotes(base))
+        finally:
+            loop.close()
+
+
 def seed_provider_result() -> ProviderResult:
     _, current = build_seed_snapshots()
     current, excluded_count = filter_common_stocks(current)
@@ -138,10 +161,21 @@ def seed_provider_result() -> ProviderResult:
     )
 
 
-def fetch_market_snapshots(*, allow_seed_fallback: bool = False, min_official_count: int = 500) -> ProviderResult:
+def fetch_market_snapshots(*, allow_seed_fallback: bool = False, min_official_count: int = 1500) -> ProviderResult:
     official = fetch_official_snapshots()
-    if len(official.snapshots) >= min_official_count:
+    official_has_twse = official.twse_count > 0
+    if len(official.snapshots) >= min_official_count and official_has_twse:
         return official
+    if os.getenv("SMART_MONEY_ENABLE_MCP_PROXY", "1").strip().lower() not in {"0", "false", "no"}:
+        mcp = fetch_mcp_proxy_snapshots()
+        if len(mcp.snapshots) >= min_official_count:
+            mcp.errors = [
+                *official.errors,
+                *mcp.errors,
+                f"official_direct_count_below_min:{len(official.snapshots)}",
+                f"official_direct_twse_count:{official.twse_count}",
+            ]
+            return mcp
     if not allow_seed_fallback:
         return official
     seed = seed_provider_result()
