@@ -192,6 +192,12 @@ def fetch_market_snapshots(*, allow_seed_fallback: bool = False, min_official_co
                 f"official_direct_twse_count:{official.twse_count}",
             ]
             return mcp
+        official.errors = [
+            *official.errors,
+            *mcp.errors,
+            f"mcp_proxy_count_below_min:{len(mcp.snapshots)}",
+            f"mcp_proxy_status:{mcp.source_status}",
+        ]
     if not allow_seed_fallback:
         return official
     seed = seed_provider_result()
