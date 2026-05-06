@@ -140,8 +140,24 @@ def fetch_mcp_proxy_snapshots() -> ProviderResult:
         loop = asyncio.new_event_loop()
         try:
             return loop.run_until_complete(fetch_mcp_realtime_quotes(base))
+        except Exception as exc:
+            return ProviderResult(
+                snapshots=[],
+                source_used="twse_mcp_realtime_proxy",
+                source_status="failed",
+                source_ts=taipei_now(),
+                errors=[f"mcp_proxy:{type(exc).__name__}"],
+            )
         finally:
             loop.close()
+    except Exception as exc:
+        return ProviderResult(
+            snapshots=[],
+            source_used="twse_mcp_realtime_proxy",
+            source_status="failed",
+            source_ts=taipei_now(),
+            errors=[f"mcp_proxy:{type(exc).__name__}"],
+        )
 
 
 def seed_provider_result() -> ProviderResult:
