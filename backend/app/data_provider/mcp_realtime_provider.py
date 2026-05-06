@@ -11,13 +11,9 @@ from app.time_utils import TAIPEI_TZ, ensure_taipei, market_date, taipei_now
 
 
 MCP_URL = "https://TW-Stock-MCP-Server.fastmcp.app/mcp"
-QUOTE_LINE_RE = re.compile(
-    r"^(?P<code>\d{4})\s+(?P<name>.+?)\s+\[(?P<market>上市|上櫃)\]\s+\|\s+"
-    r"成交:\s+(?P<price>[\d.]+|-)\s+\|\s+開:\s+(?P<open>[\d.]+|-)\s+\|\s+"
-    r"高:\s+(?P<high>[\d.]+|-)\s+\|\s+低:\s+(?P<low>[\d.]+|-)\s+\|\s+"
-    r"昨收:\s+(?P<prev>[\d.]+|-)\s+\|\s+量:\s+(?P<volume>\d+|-)"
-    r"張.*\|\s+(?P<date>\d{8})\s+(?P<time>\d{2}:\d{2}:\d{2})"
-)
+QUOTE_HEAD_RE = re.compile(r"^(?P<code>\d{4})\s+(?P<name>.+?)\s+\[(?P<market>.*?)\]$")
+NUMBER_RE = re.compile(r"(-?\d+(?:\.\d+)?)")
+QUOTE_TIME_RE = re.compile(r"(\d{8})\s+(\d{2}:\d{2}:\d{2})")
 
 
 def _num(value: str | None) -> float:
@@ -27,6 +23,11 @@ def _num(value: str | None) -> float:
         return float(value)
     except ValueError:
         return 0.0
+
+
+def _segment_number(segment: str) -> str:
+    match = NUMBER_RE.search(segment)
+    return match.group(1) if match else "-"
 
 
 def _parse_time(date_text: str, time_text: str) -> datetime:
@@ -78,7 +79,10 @@ def _chunked(items: list[StockSnapshot], size: int) -> list[list[StockSnapshot]]
 
 
 def _merge_quote(line: str, base_by_code: dict[str, StockSnapshot], *, now: datetime) -> StockSnapshot | None:
-    match = QUOTE_LINE_RE.match(line.strip())
+    parts = [part.strip() for part in line.strip().split("|")]
+    if len(parts) < 8:
+        return None
+    match = QUOTE_HEAD_RE.match(parts[0])
     if not match:
         return None
     data = match.groupdict()
@@ -86,24 +90,34 @@ def _merge_quote(line: str, base_by_code: dict[str, StockSnapshot], *, now: date
     base = base_by_code.get(code)
     if not base:
         return None
-    price = _num(data["price"])
-    previous_close = _num(data["prev"]) or base.previous_close or price
-    if price <= 0 or previous_close <= 0:
+
+    raw_price = _num(_segment_number(parts[1]))
+    open_price = _num(_segment_number(parts[2]))
+    high = _num(_segment_number(parts[3]))
+    low = _num(_segment_number(parts[4]))
+    previous_close = _num(_segment_number(parts[5])) or base.previous_close or raw_price
+    price = raw_price or open_price or previous_close
+    open_price = open_price or price
+    high = high or price
+    low = low or price
+    volume_lots = int(_num(_segment_number(parts[6])))
+    time_match = QUOTE_TIME_RE.search(parts[-1])
+    if price <= 0 or previous_close <= 0 or not time_match:
         return None
-    volume_lots = int(_num(data["volume"]))
+
     volume_shares = volume_lots * 1000
     trade_value = price * volume_shares
-    source_ts = _parse_time(data["date"], data["time"])
+    source_ts = _parse_time(time_match.group(1), time_match.group(2))
     latency = max(int((now - source_ts).total_seconds()), 0)
     return base.model_copy(
         update={
             "name": data["name"].strip() or base.name,
-            "market": "TSE" if data["market"] == "上市" else "OTC",
+            "market": base.market,
             "price": price,
             "previous_close": previous_close,
-            "open": _num(data["open"]) or price,
-            "high": _num(data["high"]) or price,
-            "low": _num(data["low"]) or price,
+            "open": open_price,
+            "high": high,
+            "low": low,
             "change_pct": (price - previous_close) / previous_close * 100,
             "volume": volume_shares,
             "trade_value": trade_value,
@@ -129,7 +143,12 @@ def _merge_quote(line: str, base_by_code: dict[str, StockSnapshot], *, now: date
     )
 
 
-async def fetch_mcp_realtime_quotes(base_snapshots: list[StockSnapshot], *, now: datetime | None = None, chunk_size: int = 80) -> ProviderResult:
+async def fetch_mcp_realtime_quotes(
+    base_snapshots: list[StockSnapshot],
+    *,
+    now: datetime | None = None,
+    chunk_size: int = 80,
+) -> ProviderResult:
     now = ensure_taipei(now or taipei_now())
     base_by_code = {snapshot.code: snapshot for snapshot in base_snapshots}
     merged: dict[str, StockSnapshot] = {}
@@ -153,11 +172,7 @@ async def fetch_mcp_realtime_quotes(base_snapshots: list[StockSnapshot], *, now:
                     },
                     session_id,
                 )
-                text = (
-                    payload.get("result", {})
-                    .get("structuredContent", {})
-                    .get("result", "")
-                )
+                text = payload.get("result", {}).get("structuredContent", {}).get("result", "")
                 for line in text.splitlines():
                     snapshot = _merge_quote(line, base_by_code, now=now)
                     if snapshot:
