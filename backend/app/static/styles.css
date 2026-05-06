@@ -10,6 +10,10 @@ h2 { font-size: 17px; margin: 0 0 12px; }
 p { color: #8ea0b8; margin: 4px 0 0; }
 .icon, .primary, .searchbar button { border: 0; border-radius: 8px; background: #2f6fed; color: #fff; min-height: 40px; padding: 0 14px; }
 .icon { width: 42px; padding: 0; background: #182334; border: 1px solid #31415b; }
+.section-nav { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.section-nav h2 { margin: 0; }
+.back-button { min-height: 36px; border: 1px solid #31415b; border-radius: 999px; background: #101824; color: #dce8f7; padding: 0 12px; }
+.back-button:hover { border-color: #4f76b2; background: #16243a; }
 .tabs { position: fixed; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: repeat(3, 1fr); background: rgba(10, 15, 22, .96); border-top: 1px solid #27364b; z-index: 3; }
 .tabs button { min-height: 60px; color: #8da0b8; background: transparent; border: 0; }
 .tabs button.active { color: #ff5b6e; font-weight: 800; }

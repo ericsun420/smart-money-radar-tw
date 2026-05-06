@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Smart Money Radar 台股即時資金雷達</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260430-3037" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260506-nav" />
 </head>
 <body>
   <main class="page">
@@ -31,7 +31,10 @@
     </section>
 
     <section id="search" class="tab-panel hidden">
-      <h2>個股資金查詢</h2>
+      <div class="section-nav">
+        <button id="backToDashboard" class="back-button hidden" type="button">← 返回資金流向</button>
+        <h2>個股資金查詢</h2>
+      </div>
       <form id="stockForm" class="searchbar">
         <input id="stockCode" placeholder="請輸入股票代號或名稱" />
         <button>查詢</button>
@@ -65,7 +68,7 @@
       <div id="sheetBody"></div>
     </section>
   </div>
-  <script src="/static/app.js?v=20260430-3037"></script>
+  <script src="/static/app.js?v=20260506-nav"></script>
 </body>
 </html>
 

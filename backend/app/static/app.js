@@ -21,6 +21,8 @@ const flowAmount = (row) => Number(row.stock_flow_proxy_amount ?? row.display_si
 const deltaProxy = (row) => Number(row.previous_delta_proxy_amount ?? row.delta_signed_flow_yi ?? row.delta_yi ?? 0);
 
 let topLimit = 5;
+let dashboardScrollY = 0;
+let previousTab = "dashboard";
 
 async function getJson(path) {
   const response = await fetch(path);
@@ -257,10 +259,8 @@ function bindClicks() {
   });
   document.querySelectorAll("[data-stock]").forEach((element) => {
     element.onclick = () => {
-      document.querySelectorAll(".tabs button").forEach((button) => button.classList.remove("active"));
-      document.querySelector('[data-tab="search"]').classList.add("active");
-      document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.add("hidden"));
-      $("search").classList.remove("hidden");
+      if (!$("dashboard").classList.contains("hidden")) dashboardScrollY = window.scrollY;
+      showTab("search", { fromStockClick: true });
       $("stockCode").value = element.dataset.stock;
       searchStock(element.dataset.stock);
     };
@@ -274,17 +274,31 @@ function bindClicks() {
   }
 }
 
+function showTab(tabName, options = {}) {
+  const currentTab = document.querySelector(".tabs button.active")?.dataset.tab || "dashboard";
+  if (currentTab === "dashboard" && tabName !== "dashboard") dashboardScrollY = window.scrollY;
+  if (tabName !== currentTab) previousTab = currentTab;
+  document.querySelectorAll(".tabs button").forEach((item) => item.classList.remove("active"));
+  document.querySelector(`[data-tab="${tabName}"]`)?.classList.add("active");
+  document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.add("hidden"));
+  $(tabName).classList.remove("hidden");
+  $("backToDashboard")?.classList.toggle("hidden", tabName !== "search" || (!options.fromStockClick && previousTab !== "dashboard"));
+  if (tabName === "dashboard") {
+    requestAnimationFrame(() => window.scrollTo({ top: dashboardScrollY, behavior: options.instant ? "auto" : "smooth" }));
+  } else {
+    requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: options.instant ? "auto" : "smooth" }));
+  }
+}
+
 document.querySelectorAll(".tabs button").forEach((button) => {
   button.onclick = () => {
-    document.querySelectorAll(".tabs button").forEach((item) => item.classList.remove("active"));
-    button.classList.add("active");
-    document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.add("hidden"));
-    $(button.dataset.tab).classList.remove("hidden");
+    showTab(button.dataset.tab);
   };
 });
 
 $("refresh").onclick = loadDashboard;
 $("officialOnly").onchange = loadDashboard;
+$("backToDashboard").onclick = () => showTab("dashboard");
 $("stockForm").onsubmit = (event) => {
   event.preventDefault();
   searchStock($("stockCode").value);
