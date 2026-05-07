@@ -108,13 +108,14 @@ def build_stock_signal(flow: StockFlow, *, blocked_reason: str | None = None) ->
     verb = "inflow" if flow.direction == "INFLOW" else "outflow" if flow.direction == "OUTFLOW" else "neutral"
     event_type = "stock_flow"
     market_date_value = market_date(flow.timestamp)
+    source_ts = flow.quote_time or flow.timestamp
     fingerprint = signal_fingerprint(
         target_id=flow.code,
         signal_level="normal",
         formal_grade=formal,
         market_date_value=market_date_value,
         event_type=event_type,
-        source_ts=flow.timestamp,
+        source_ts=source_ts,
     )
     return SignalEvent(
         id=str(uuid4()),
@@ -124,7 +125,7 @@ def build_stock_signal(flow: StockFlow, *, blocked_reason: str | None = None) ->
         event_type=event_type,
         fingerprint=fingerprint,
         market_date=market_date_value,
-        source_ts=flow.timestamp,
+        source_ts=source_ts,
         direction=flow.direction,
         amount_yi=abs(flow.display_signed_flow_yi),
         net_yi=flow.display_signed_flow_yi,

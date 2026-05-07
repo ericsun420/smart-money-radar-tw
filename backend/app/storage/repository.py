@@ -268,7 +268,7 @@ class InMemoryRepository:
             topic_states=self.topic_states,
             net_near_zero_ratio=self.settings.net_near_zero_ratio,
         )
-        signals = self.signals[:20]
+        signals = self._latest_signal_cards(self.signals[:20])
         if official_full_only:
             topics = [t for t in topics if t.formal_grade and t.data_quality_bucket in {"official_full", "official_intraday"}]
             flows = [f for f in flows if f.formal_grade and f.data_quality_bucket in {"official_full", "official_intraday"}]
@@ -292,6 +292,26 @@ class InMemoryRepository:
             "sector_strength_top": self._sector_strength_top(topics, flows)[:50],
             "latest_signals": signals,
         }
+
+    def _latest_signal_cards(self, signals: list[SignalEvent]) -> list[SignalEvent]:
+        normalized: list[SignalEvent] = []
+        for signal in signals:
+            if signal.target_type != "stock":
+                normalized.append(signal)
+                continue
+            flow = self.stock_flows.get(signal.target_id)
+            quote_time = flow.quote_time if flow else None
+            if not quote_time:
+                snapshot = self.snapshots.get(signal.target_id)
+                quote_time = snapshot.market_data_time or snapshot.source_ts if snapshot else None
+            if not quote_time:
+                normalized.append(signal)
+                continue
+            if signal.source_ts is None or ensure_taipei(signal.source_ts) == ensure_taipei(signal.timestamp):
+                normalized.append(signal.model_copy(update={"source_ts": quote_time}))
+            else:
+                normalized.append(signal)
+        return normalized
 
     def _main_ranking_flows(self, flows: list[StockFlow]) -> list[StockFlow]:
         """Keep stale or wrong-date quotes out of the public TOP lists.

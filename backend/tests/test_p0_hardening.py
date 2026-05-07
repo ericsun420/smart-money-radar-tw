@@ -14,7 +14,7 @@ from app.data_provider.twse_mis_provider import normalize_mis_item
 from app.engine.direction_engine import infer_direction
 from app.engine.quality import apply_snapshot_quality
 from app.engine.score_engine import score_topic_signal
-from app.engine.signal_engine import build_topic_signal, should_emit_topic_signal
+from app.engine.signal_engine import build_stock_signal, build_topic_signal, should_emit_topic_signal
 from app.engine.topic_aggregator import aggregate_topics
 from app.main import app
 from app.notifier.discord import format_discord_message
@@ -73,6 +73,19 @@ def test_display_and_delta_flow_are_separate():
     flow = infer_direction(cur, prev, None, min_value_delta_yi=0.05)
     assert flow.display_signed_flow_yi == 100
     assert flow.delta_signed_flow_yi == 10
+
+
+def test_stock_signal_uses_quote_time_as_source_ts():
+    scan_time = datetime(2026, 5, 7, 20, 31, tzinfo=TAIPEI_TZ)
+    quote_time = datetime(2026, 5, 7, 13, 33, tzinfo=TAIPEI_TZ)
+    prev = official_snapshot("2330", 99, 90, scan_time - timedelta(minutes=5))
+    cur = official_snapshot("2330", 100, 100, scan_time).model_copy(
+        update={"market_data_time": quote_time, "source_ts": quote_time}
+    )
+    flow = infer_direction(cur, prev, None, min_value_delta_yi=0.05)
+    signal = build_stock_signal(flow)
+    assert signal.timestamp == scan_time
+    assert signal.source_ts == quote_time
 
 
 def test_same_direction_count_accumulates_and_reversal_resets():

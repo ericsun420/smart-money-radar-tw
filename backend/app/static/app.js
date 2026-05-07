@@ -142,10 +142,10 @@ function feedCard(signal) {
     </div>
     <b class="${directionClass(signal.direction)}">${directionText(signal.direction)} ${directionArrow(signal.direction)}｜資金熱度 ⚡${Number(signal.score || 0)}</b>
     <div class="grid">
-      <span>時間<b>${timeText(signal.timestamp)}</b></span>
+      <span>異動時間<b>${timeText(signal.timestamp)}</b></span>
       <span>${amountLabel}<b class="${directionClass(signal.direction)}">${yi(signal.net_yi)}</b></span>
       <span>較上輪<b>${yi(signal.delta_from_previous_yi)}</b></span>
-      <span>資料時間<b>${timeText(signal.source_ts)}</b></span>
+      <span>行情時間<b>${timeText(signal.source_ts)}</b></span>
     </div>
   </button>`;
 }
