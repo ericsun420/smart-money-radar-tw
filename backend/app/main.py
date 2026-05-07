@@ -270,6 +270,10 @@ async def smart_money_access_guard(request: Request, call_next):
         )
         return response
     response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
     if query_token:
         response.set_cookie(
             ACCESS_COOKIE_NAME,
