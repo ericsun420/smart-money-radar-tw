@@ -23,6 +23,7 @@ const deltaProxy = (row) => Number(row.previous_delta_proxy_amount ?? row.delta_
 let topLimit = 5;
 let dashboardScrollY = 0;
 let previousTab = "dashboard";
+let dashboardRetryTimer = null;
 
 async function getJson(path) {
   const response = await fetch(path);
@@ -151,7 +152,7 @@ function feedCard(signal) {
 
 async function loadDashboard() {
   try {
-    const officialOnly = $("officialOnly")?.checked ? "true" : "false";
+    const officialOnly = "false";
     const [health, market, rankings, dashboard, queue] = await Promise.all([
       getJson("/api/health"),
       getJson("/api/market/flow"),
@@ -159,6 +160,19 @@ async function loadDashboard() {
       getJson(`/api/dashboard/latest?official_full_only=${officialOnly}`),
       getJson("/api/discord/queue"),
     ]);
+    if (!dashboard.updated_at && Number(health.result_count || 0) === 0) {
+      if (!dashboardRetryTimer) {
+        setRefreshStatus("資料同步中，伺服器剛醒來，稍後會自動重試...", "ok");
+        dashboardRetryTimer = setTimeout(() => {
+          dashboardRetryTimer = null;
+          loadDashboard();
+        }, 8000);
+      }
+    } else if (dashboardRetryTimer) {
+      clearTimeout(dashboardRetryTimer);
+      dashboardRetryTimer = null;
+      setRefreshStatus(`資料已載入，資料時間 ${health.market_data_time ? timeText(health.market_data_time) : timeText(dashboard.updated_at)}。`, "ok");
+    }
     $("updated").textContent = `更新 ${timeText(dashboard.updated_at)}`;
     $("overview").innerHTML = overviewCard(health, market, queue || { stats: {} });
     $("rankings").innerHTML = `
@@ -334,7 +348,7 @@ document.querySelectorAll(".tabs button").forEach((button) => {
 });
 
 $("refresh").onclick = refreshNow;
-$("officialOnly").onchange = loadDashboard;
+if ($("officialOnly")) $("officialOnly").onchange = loadDashboard;
 $("backToDashboard").onclick = () => showTab("dashboard");
 $("stockForm").onsubmit = (event) => {
   event.preventDefault();
