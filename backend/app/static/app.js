@@ -199,7 +199,9 @@ async function loadDashboard() {
       <section class="card"><h2>類股內強度</h2>
         ${stockRankList("類股內排名", rankings.sector_strength_top || [], "sector_strength_pct", 20)}
       </section>`;
-    $("signals").innerHTML = `<section class="card"><h2>最新資金異動提醒</h2><p class="muted">這裡列出達到提醒條件的題材或個股資金異動，方便外出時快速判斷要不要點進去追蹤。</p>${(dashboard.latest_signals || []).map(feedCard).join("")}</section>`;
+    const signalCards = (dashboard.latest_signals || []).map(feedCard).join("");
+    const signalEmpty = `<div class="empty">目前沒有符合即時條件的資金異動。若行情停在收盤時間，系統會保留排行觀察，但不會把它當成即時提醒。</div>`;
+    $("signals").innerHTML = `<section class="card"><h2>最新資金異動提醒</h2><p class="muted">這裡只列出由新行情觸發的題材或個股資金異動；行情時間過舊時會自動暫停顯示。</p>${signalCards || signalEmpty}</section>`;
     bindClicks();
   } catch (error) {
     $("updated").textContent = "載入失敗";

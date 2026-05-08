@@ -88,6 +88,47 @@ def test_stock_signal_uses_quote_time_as_source_ts():
     assert signal.source_ts == quote_time
 
 
+def test_topic_signal_uses_underlying_quote_time_as_source_ts():
+    scan_time = datetime(2026, 5, 7, 9, 25, tzinfo=TAIPEI_TZ)
+    quote_time = datetime(2026, 5, 7, 9, 24, tzinfo=TAIPEI_TZ)
+    prev = official_snapshot("2330", 99, 90, scan_time - timedelta(minutes=5))
+    cur = official_snapshot("2330", 100, 100, scan_time).model_copy(
+        update={"market_data_time": quote_time, "source_ts": quote_time}
+    )
+    flow = infer_direction(cur, prev, None, min_value_delta_yi=0.05)
+    topics, _ = aggregate_topics([flow], timestamp=scan_time, topic_states={})
+    signal = build_topic_signal(next(t for t in topics if t.topic_name == "AI"), None)
+    assert signal.timestamp == scan_time
+    assert signal.source_ts == quote_time
+
+
+def test_latest_signal_cards_exclude_old_quotes_from_realtime_alerts():
+    repo = InMemoryRepository(store=make_test_db("fresh-alert"), use_provider=False)
+    stale_alert = SignalEvent(
+        id="old-quote",
+        timestamp=datetime(2026, 5, 7, 20, 31, tzinfo=TAIPEI_TZ),
+        source_ts=datetime(2026, 5, 7, 13, 30, tzinfo=TAIPEI_TZ),
+        target_type="stock",
+        target_id="2330",
+        direction="INFLOW",
+        amount_yi=1,
+        net_yi=1,
+        previous_net_yi=0,
+        delta_from_previous_yi=1,
+        score=5,
+        message="stock 2330 台積電 inflow",
+    )
+    fresh_alert = stale_alert.model_copy(
+        update={
+            "id": "fresh-quote",
+            "timestamp": datetime(2026, 5, 7, 9, 25, tzinfo=TAIPEI_TZ),
+            "source_ts": datetime(2026, 5, 7, 9, 24, tzinfo=TAIPEI_TZ),
+        }
+    )
+    assert repo._latest_signal_cards([stale_alert]) == []
+    assert repo._latest_signal_cards([fresh_alert])[0].id == "fresh-quote"
+
+
 def test_same_direction_count_accumulates_and_reversal_resets():
     now = datetime.now()
     f1 = infer_direction(official_snapshot("1", 101, 10, now), official_snapshot("1", 100, 9, now - timedelta(minutes=5)), None, min_value_delta_yi=0.05)
@@ -389,28 +430,27 @@ def test_no_webhook_secret_in_settings_or_discord_error():
 
 
 def test_dashboard_contains_top50_and_sector_breadth():
-    with TestClient(app) as client:
-        data = client.get("/api/dashboard/latest").json()
-        assert "stock_inflow_top50" in data
-        assert "stock_outflow_top50" in data
-        assert "unusual_value_top50" in data
-        assert "relative_flow_proxy_top50" in data
-        assert "relative_flow_proxy_top50" in client.get("/api/rankings/latest").json()
-        assert "sector_strength_top" in data
-        rankings = client.get("/api/rankings/latest").json()
-        assert "relative_flow_top50" not in rankings["ranking_basis"]
-        assert rankings["ranking_basis"]["relative_flow_proxy_top50"].startswith("absolute delta_signed_flow_yi")
-        topic_name = (data["topic_inflow_top5"] or data["topic_outflow_top5"])[0]["topic_name"]
-        topic = client.get(f"/api/topics/{topic_name}").json()["topic_flow"]
-        assert "strong_stock_count" in topic
-        assert "weak_stock_count" in topic
-        assert "top1_contribution_pct" in topic
-        assert "ex_top1_net_yi" in topic
-        assert "up_count" in topic
-        assert "down_count" in topic
-        assert "median_flow_yi" in topic
-        assert "trimmed_net_flow_yi" in topic
-        assert "top_stock_concentration_pct" in topic
+    radar = InMemoryRepository(store=make_test_db("dashboard-contract"), use_provider=False)
+    data = radar.dashboard()
+    assert "stock_inflow_top50" in data
+    assert "stock_outflow_top50" in data
+    assert "unusual_value_top50" in data
+    assert "relative_flow_proxy_top50" in data
+    assert "sector_strength_top" in data
+    rankings = radar.rankings()
+    assert "relative_flow_top50" not in rankings["ranking_basis"]
+    assert rankings["ranking_basis"]["relative_flow_proxy_top50"].startswith("absolute delta_signed_flow_yi")
+    topic_name = (data["topic_inflow_top5"] or data["topic_outflow_top5"])[0].topic_name
+    topic = radar.topic_detail(topic_name)["topic_flow"]
+    assert "strong_stock_count" in topic
+    assert "weak_stock_count" in topic
+    assert "top1_contribution_pct" in topic
+    assert "ex_top1_net_yi" in topic
+    assert "up_count" in topic
+    assert "down_count" in topic
+    assert "median_flow_yi" in topic
+    assert "trimmed_net_flow_yi" in topic
+    assert "top_stock_concentration_pct" in topic
 
 
 def test_market_flow_endpoint_and_name_search_contract():

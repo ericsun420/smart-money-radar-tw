@@ -118,6 +118,7 @@ def aggregate_topics(
                 value_delta_yi=f.value_delta_yi,
                 impact_pct=yi(abs(f.display_signed_flow_yi) / abs(net) * 100) if net else 0,
                 contribution_ratio=(abs(f.display_signed_flow_yi) / abs(net)) if net else 0,
+                quote_time=f.quote_time,
             )
             for f in top5
         ]

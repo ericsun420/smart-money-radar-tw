@@ -43,13 +43,14 @@ def build_topic_signal(topic: TopicFlow, previous_state: TopicState | None, *, b
     formal = blocked_reason is None and topic.formal_grade
     event_type = "topic_reversal" if previous_state and previous_state.last_direction not in {"NEUTRAL", topic.direction} else "topic_flow"
     market_date_value = market_date(topic.timestamp)
+    source_ts = max((impact.quote_time for impact in topic.top_impacts if impact.quote_time), default=topic.timestamp)
     fingerprint = signal_fingerprint(
         target_id=topic.topic_name,
         signal_level=topic.signal_level,
         formal_grade=formal,
         market_date_value=market_date_value,
         event_type=event_type,
-        source_ts=topic.timestamp,
+        source_ts=source_ts,
     )
     return SignalEvent(
         id=str(uuid4()),
@@ -59,7 +60,7 @@ def build_topic_signal(topic: TopicFlow, previous_state: TopicState | None, *, b
         event_type=event_type,
         fingerprint=fingerprint,
         market_date=market_date_value,
-        source_ts=topic.timestamp,
+        source_ts=source_ts,
         topic_name=topic.topic_name,
         direction=topic.direction,
         amount_yi=abs(topic.net_yi),

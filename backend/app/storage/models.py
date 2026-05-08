@@ -158,6 +158,7 @@ class ImpactStock(BaseModel):
     value_delta_yi: float = 0
     impact_pct: float
     contribution_ratio: float = 0
+    quote_time: datetime | None = None
 
 
 class TopicFlow(BaseModel):

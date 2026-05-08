@@ -268,7 +268,7 @@ class InMemoryRepository:
             topic_states=self.topic_states,
             net_near_zero_ratio=self.settings.net_near_zero_ratio,
         )
-        signals = self._latest_signal_cards(self.signals[:20])
+        signals = self._latest_signal_cards(self.signals)
         if official_full_only:
             topics = [t for t in topics if t.formal_grade and t.data_quality_bucket in {"official_full", "official_intraday"}]
             flows = [f for f in flows if f.formal_grade and f.data_quality_bucket in {"official_full", "official_intraday"}]
@@ -296,22 +296,36 @@ class InMemoryRepository:
     def _latest_signal_cards(self, signals: list[SignalEvent]) -> list[SignalEvent]:
         normalized: list[SignalEvent] = []
         for signal in signals:
-            if signal.target_type != "stock":
-                normalized.append(signal)
-                continue
-            flow = self.stock_flows.get(signal.target_id)
-            quote_time = flow.quote_time if flow else None
+            quote_time = None
+            if signal.target_type == "stock":
+                flow = self.stock_flows.get(signal.target_id)
+                quote_time = flow.quote_time if flow else None
+                if not quote_time:
+                    snapshot = self.snapshots.get(signal.target_id)
+                    quote_time = snapshot.market_data_time or snapshot.source_ts if snapshot else None
+            elif signal.target_type == "topic":
+                topic = self.topic_flows.get(signal.target_id)
+                if topic:
+                    quote_time = max((impact.quote_time for impact in topic.top_impacts if impact.quote_time), default=None)
             if not quote_time:
-                snapshot = self.snapshots.get(signal.target_id)
-                quote_time = snapshot.market_data_time or snapshot.source_ts if snapshot else None
-            if not quote_time:
-                normalized.append(signal)
-                continue
+                quote_time = signal.source_ts
             if signal.source_ts is None or ensure_taipei(signal.source_ts) == ensure_taipei(signal.timestamp):
-                normalized.append(signal.model_copy(update={"source_ts": quote_time}))
-            else:
+                signal = signal.model_copy(update={"source_ts": quote_time})
+            if self._is_fresh_signal_alert(signal):
                 normalized.append(signal)
+            if len(normalized) >= 20:
+                break
         return normalized
+
+    def _is_fresh_signal_alert(self, signal: SignalEvent) -> bool:
+        if signal.source_ts is None:
+            return False
+        signal_time = ensure_taipei(signal.timestamp)
+        source_time = ensure_taipei(signal.source_ts)
+        if market_date(signal_time) != market_date(source_time):
+            return False
+        max_signal_source_lag = max(self.settings.stale_seconds, self.settings.scan_interval_minutes * 60 + 60)
+        return abs((signal_time - source_time).total_seconds()) <= max_signal_source_lag
 
     def _main_ranking_flows(self, flows: list[StockFlow]) -> list[StockFlow]:
         """Keep stale or wrong-date quotes out of the public TOP lists.
