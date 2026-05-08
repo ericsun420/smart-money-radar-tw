@@ -93,7 +93,7 @@ function stockRankList(title, rows, amountKey, limit = 5) {
 }
 
 function marketStatusCard(status) {
-  const badgeClass = status.is_realtime_monitoring ? "live" : "observe";
+  const badgeClass = status.is_realtime_monitoring ? "live" : (status.monitoring_mode === "public_proxy" ? "quasi" : "observe");
   return `<div class="market-status ${badgeClass}">
     <div>
       <b>${h(status.session_label || "市場狀態")}</b>

@@ -16,6 +16,21 @@ from app.storage.sqlite_store import SQLiteStore
 from app.time_utils import ensure_taipei, is_regular_tw_session, market_date, taipei_now
 
 FORMAL_SOURCE_STATUSES = {"official_full", "official_intraday"}
+AUTHORIZED_REALTIME_PROVIDERS = {
+    "fubon_snapshot",
+    "fubon_websocket",
+    "fugle_snapshot",
+    "fugle_websocket",
+    "authorized_realtime",
+    "official_authorized_intraday",
+}
+PUBLIC_QUASI_REALTIME_PROVIDERS = {
+    "twse_mcp_realtime_proxy",
+    "twse_mcp_proxy",
+    "twse_mis",
+    "twse_tpex_official",
+    "tpex_openapi",
+}
 
 
 class InMemoryRepository:
@@ -356,16 +371,29 @@ class InMemoryRepository:
 
     def _freshness_status(self, snapshot: StockSnapshot | None) -> str:
         if not snapshot:
-            return "暫緩"
+            return "資料暫停"
         if snapshot.data_quality_bucket == "stale":
-            return "暫緩"
-        if snapshot.is_realtime and snapshot.data_latency_seconds is not None and snapshot.data_latency_seconds <= self.settings.stale_seconds:
-            return "即時"
+            return "資料暫停"
+        is_fresh = snapshot.data_latency_seconds is not None and snapshot.data_latency_seconds <= self.settings.stale_seconds
+        provider = snapshot.realtime_provider or snapshot.provider_type or snapshot.source_status or ""
+        if is_fresh and snapshot.is_realtime and self._is_authorized_realtime_source(provider, snapshot.source_status):
+            return "即時行情"
+        if is_fresh and self._is_public_quasi_realtime_source(provider, snapshot.source_status):
+            return "準即時觀察"
         if snapshot.market_data_time and not is_regular_tw_session(snapshot.market_data_time):
             return "收盤"
         if snapshot.provider_type == "official_partial":
             return "收盤" if not is_regular_tw_session(taipei_now()) else "延遲"
         return "延遲"
+
+    def _is_authorized_realtime_source(self, provider: str | None, source_status: str | None) -> bool:
+        source = (provider or "").lower()
+        return source in AUTHORIZED_REALTIME_PROVIDERS
+
+    def _is_public_quasi_realtime_source(self, provider: str | None, source_status: str | None) -> bool:
+        source = (provider or "").lower()
+        status = (source_status or "").lower()
+        return source in PUBLIC_QUASI_REALTIME_PROVIDERS or status == "official_partial"
 
     def _flow_label(self, flow: StockFlow, change: float) -> tuple[str, str | None]:
         if flow.direction == "NEUTRAL":
@@ -528,7 +556,8 @@ class InMemoryRepository:
             session_label = "收盤觀察"
 
         if not market_data_time:
-            freshness_status = "暫緩"
+            freshness_status = "資料暫停"
+            monitoring_mode = "paused"
             is_realtime_monitoring = False
             reason = "no_market_data_time"
             user_message = "尚未取得行情資料，系統會在下一輪掃描後更新。"
@@ -536,39 +565,54 @@ class InMemoryRepository:
             data_time = ensure_taipei(market_data_time)
             same_market_date = market_date(data_time) == market_date(now)
             latency = abs((now - data_time).total_seconds())
+            provider = (debug.realtime_provider or debug.source_used or "") if debug else ""
+            source_status = debug.source_status if debug else ""
             if not same_market_date:
-                freshness_status = "暫緩"
+                freshness_status = "資料暫停"
+                monitoring_mode = "paused"
                 is_realtime_monitoring = False
                 reason = "market_data_not_today"
                 user_message = "行情資料不是今日資料，暫停即時提醒。"
             elif session_status == "preopen":
                 freshness_status = "盤前"
+                monitoring_mode = "paused"
                 is_realtime_monitoring = False
                 reason = "market_not_open_yet"
                 user_message = "尚未開盤，資金異動會在 09:00 後開始累積。"
             elif session_status == "regular":
-                if debug and debug.is_realtime and latency <= self.settings.stale_seconds:
-                    freshness_status = "即時"
+                if debug and debug.is_realtime and latency <= self.settings.stale_seconds and self._is_authorized_realtime_source(provider, source_status):
+                    freshness_status = "即時行情"
+                    monitoring_mode = "authorized_realtime"
                     is_realtime_monitoring = True
                     reason = "realtime_quotes_fresh"
                     user_message = "盤中監控中，最新資金異動只會使用新行情觸發。"
+                elif debug and latency <= self.settings.stale_seconds and self._is_public_quasi_realtime_source(provider, source_status):
+                    freshness_status = "準即時觀察"
+                    monitoring_mode = "public_proxy"
+                    is_realtime_monitoring = False
+                    reason = "public_proxy_quotes_fresh"
+                    user_message = "盤中資料持續更新中；目前為公開來源準即時觀察，排行可參考，正式即時推播仍暫停。"
                 elif latency <= self.settings.stale_seconds:
                     freshness_status = "延遲"
+                    monitoring_mode = "delayed"
                     is_realtime_monitoring = False
                     reason = "source_not_realtime"
                     user_message = "目前是延遲或觀察資料，排行可參考，正式即時提醒暫停。"
                 else:
-                    freshness_status = "暫緩"
+                    freshness_status = "資料暫停"
+                    monitoring_mode = "paused"
                     is_realtime_monitoring = False
                     reason = "market_data_stale"
                     user_message = "行情時間過舊，暫停最新資金異動提醒。"
             elif session_status == "after_close":
                 freshness_status = "收盤"
+                monitoring_mode = "closed"
                 is_realtime_monitoring = False
                 reason = "market_closed"
                 user_message = "目前為收盤觀察資料，不列入即時提醒。"
             else:
                 freshness_status = "休市"
+                monitoring_mode = "closed"
                 is_realtime_monitoring = False
                 reason = "market_closed"
                 user_message = "目前休市，僅保留最近行情觀察。"
@@ -577,6 +621,7 @@ class InMemoryRepository:
             session_status=session_status,
             session_label=session_label,
             freshness_status=freshness_status,
+            monitoring_mode=monitoring_mode,
             is_realtime_monitoring=is_realtime_monitoring,
             market_data_time=market_data_time,
             last_scan_at=self.last_scan_at,

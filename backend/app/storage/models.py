@@ -344,7 +344,8 @@ class MarketFlowDTO(BaseModel):
 class MarketStatusDTO(BaseModel):
     session_status: Literal["preopen", "regular", "after_close", "closed", "unknown"]
     session_label: str
-    freshness_status: Literal["即時", "延遲", "收盤", "盤前", "休市", "暫緩"]
+    freshness_status: Literal["即時行情", "準即時觀察", "延遲", "收盤", "盤前", "休市", "資料暫停"]
+    monitoring_mode: Literal["authorized_realtime", "public_proxy", "delayed", "closed", "paused"] = "paused"
     is_realtime_monitoring: bool
     market_data_time: datetime | None = None
     last_scan_at: datetime | None = None

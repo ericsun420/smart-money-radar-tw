@@ -479,9 +479,61 @@ def test_market_status_endpoint_contract():
         status = response.json()
         assert status["session_status"] in {"preopen", "regular", "after_close", "closed", "unknown"}
         assert status["session_label"]
-        assert status["freshness_status"] in {"即時", "延遲", "收盤", "盤前", "休市", "暫緩"}
+        assert status["freshness_status"] in {"即時行情", "準即時觀察", "延遲", "收盤", "盤前", "休市", "資料暫停"}
+        assert status["monitoring_mode"] in {"authorized_realtime", "public_proxy", "delayed", "closed", "paused"}
         assert isinstance(status["is_realtime_monitoring"], bool)
         assert status["user_message"]
+
+
+def test_fresh_public_proxy_market_status_is_quasi_realtime(monkeypatch):
+    repo = InMemoryRepository(store=make_test_db("market-status-quasi"), use_provider=False)
+    now = datetime(2026, 5, 8, 10, 0, tzinfo=TAIPEI_TZ)
+    monkeypatch.setattr("app.storage.repository.taipei_now", lambda: now)
+    repo.last_scan_at = now
+    repo.last_debug_summary = ScanDebugSummary(
+        scan_started_at=now,
+        market_date="2026-05-08",
+        source_used="twse_mcp_realtime_proxy",
+        source_status="official_partial",
+        market_data_time=now - timedelta(seconds=20),
+        data_latency_seconds=20,
+        is_realtime=False,
+        is_intraday=True,
+        realtime_provider="twse_mis",
+        result_count=1945,
+    )
+
+    status = repo.market_status()
+
+    assert status.freshness_status == "準即時觀察"
+    assert status.monitoring_mode == "public_proxy"
+    assert status.is_realtime_monitoring is False
+    assert status.reason == "public_proxy_quotes_fresh"
+
+
+def test_authorized_realtime_market_status_is_realtime(monkeypatch):
+    repo = InMemoryRepository(store=make_test_db("market-status-live"), use_provider=False)
+    now = datetime(2026, 5, 8, 10, 0, tzinfo=TAIPEI_TZ)
+    monkeypatch.setattr("app.storage.repository.taipei_now", lambda: now)
+    repo.last_scan_at = now
+    repo.last_debug_summary = ScanDebugSummary(
+        scan_started_at=now,
+        market_date="2026-05-08",
+        source_used="fugle_snapshot",
+        source_status="official_intraday",
+        market_data_time=now - timedelta(seconds=10),
+        data_latency_seconds=10,
+        is_realtime=True,
+        is_intraday=True,
+        realtime_provider="fugle_snapshot",
+        result_count=1945,
+    )
+
+    status = repo.market_status()
+
+    assert status.freshness_status == "即時行情"
+    assert status.monitoring_mode == "authorized_realtime"
+    assert status.is_realtime_monitoring is True
 
 
 def test_mainline_readme_and_ui_do_not_use_strategy_or_overclaim_terms():
@@ -631,7 +683,7 @@ def test_3037_latest_quote_overrides_ranking_and_stock_detail_regression():
     assert all(row.change == 80 for row in rows_3037)
     assert all(round(row.change_pct or 0, 2) == 9.96 for row in rows_3037)
     assert all(row.trade_date == "2026-04-30" for row in rows_3037)
-    assert rows_3037[0].freshness_status == "即時"
+    assert rows_3037[0].freshness_status == "準即時觀察"
     assert not any(row.code == "3037" for row in rankings["stock_outflow_top50"])
     assert any(row.code == "3037" for row in rankings["stock_inflow_top50"])
 
