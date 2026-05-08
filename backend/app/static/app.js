@@ -92,12 +92,27 @@ function stockRankList(title, rows, amountKey, limit = 5) {
   }).join("")}</div>`;
 }
 
-function overviewCard(health, market, queue) {
+function marketStatusCard(status) {
+  const badgeClass = status.is_realtime_monitoring ? "live" : "observe";
+  return `<div class="market-status ${badgeClass}">
+    <div>
+      <b>${h(status.session_label || "市場狀態")}</b>
+      <span>${h(status.user_message || "")}</span>
+    </div>
+    <div class="market-status-meta">
+      <span>行情時間 <b>${timeText(status.market_data_time)}</b></span>
+      <span>資料狀態 <b>${h(status.freshness_status || "-")}</b></span>
+    </div>
+  </div>`;
+}
+
+function overviewCard(health, market, queue, marketStatus) {
   const stats = queue.stats || {};
   const pushPauseReason = market["push_" + "blocked_" + "reason"];
   const observation = pushPauseReason ? `<div class="mode">觀察模式：目前僅供盤中觀察，正式推播已暫停。</div>` : "";
   return `<section class="card">
     <h2>即時資金流向</h2>
+    ${marketStatusCard(marketStatus || {})}
     <div class="metric-grid">
       <span>推估流入<b class="red">${yi(market.market_inflow_proxy_amount, false)}</b></span>
       <span>推估流出<b class="green">${yi(market.market_outflow_proxy_amount, false)}</b></span>
@@ -153,9 +168,10 @@ function feedCard(signal) {
 async function loadDashboard() {
   try {
     const officialOnly = "false";
-    const [health, market, rankings, dashboard, queue] = await Promise.all([
+    const [health, market, marketStatus, rankings, dashboard, queue] = await Promise.all([
       getJson("/api/health"),
       getJson("/api/market/flow"),
+      getJson("/api/market/status"),
       getJson(`/api/rankings/latest?official_full_only=${officialOnly}`),
       getJson(`/api/dashboard/latest?official_full_only=${officialOnly}`),
       getJson("/api/discord/queue"),
@@ -174,7 +190,7 @@ async function loadDashboard() {
       setRefreshStatus(`資料已載入，資料時間 ${health.market_data_time ? timeText(health.market_data_time) : timeText(dashboard.updated_at)}。`, "ok");
     }
     $("updated").textContent = `更新 ${timeText(dashboard.updated_at)}`;
-    $("overview").innerHTML = overviewCard(health, market, queue || { stats: {} });
+    $("overview").innerHTML = overviewCard(health, market, queue || { stats: {} }, marketStatus);
     $("rankings").innerHTML = `
       <section class="card"><h2>類股雷達掃描</h2><div class="split">
         ${topicRankList("資金流入 TOP5", rankings.topic_inflow_top50 || [], "in")}
@@ -200,7 +216,8 @@ async function loadDashboard() {
         ${stockRankList("類股內排名", rankings.sector_strength_top || [], "sector_strength_pct", 20)}
       </section>`;
     const signalCards = (dashboard.latest_signals || []).map(feedCard).join("");
-    const signalEmpty = `<div class="empty">目前沒有符合即時條件的資金異動。若行情停在收盤時間，系統會保留排行觀察，但不會把它當成即時提醒。</div>`;
+    const signalEmptyMessage = marketStatus?.user_message || "目前沒有符合即時條件的資金異動。";
+    const signalEmpty = `<div class="empty">${h(signalEmptyMessage)}</div>`;
     $("signals").innerHTML = `<section class="card"><h2>最新資金異動提醒</h2><p class="muted">這裡只列出由新行情觸發的題材或個股資金異動；行情時間過舊時會自動暫停顯示。</p>${signalCards || signalEmpty}</section>`;
     bindClicks();
   } catch (error) {

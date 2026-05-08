@@ -472,6 +472,18 @@ def test_market_flow_endpoint_and_name_search_contract():
         assert by_name.json()["stock_info"]["code"] == "3035"
 
 
+def test_market_status_endpoint_contract():
+    with TestClient(app) as client:
+        response = client.get("/api/market/status")
+        assert response.status_code == 200
+        status = response.json()
+        assert status["session_status"] in {"preopen", "regular", "after_close", "closed", "unknown"}
+        assert status["session_label"]
+        assert status["freshness_status"] in {"即時", "延遲", "收盤", "盤前", "休市", "暫緩"}
+        assert isinstance(status["is_realtime_monitoring"], bool)
+        assert status["user_message"]
+
+
 def test_mainline_readme_and_ui_do_not_use_strategy_or_overclaim_terms():
     project_root = Path(__file__).resolve().parents[2]
     backend_root = project_root / "backend"

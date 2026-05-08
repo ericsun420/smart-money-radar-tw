@@ -11,7 +11,7 @@ from app.engine.quality import apply_snapshot_quality
 from app.engine.signal_engine import build_stock_signal, build_topic_signal, should_emit_stock_signal, should_emit_topic_signal
 from app.engine.topic_aggregator import aggregate_topics
 from app.notifier.notification_service import NotificationService
-from app.storage.models import MarketFlowDTO, RankingItemDTO, ScanDebugSummary, Settings, SignalCardDTO, SignalEvent, StockFlow, StockSnapshot, TopicCardDTO, TopicFlow, TopicState
+from app.storage.models import MarketFlowDTO, MarketStatusDTO, RankingItemDTO, ScanDebugSummary, Settings, SignalCardDTO, SignalEvent, StockFlow, StockSnapshot, TopicCardDTO, TopicFlow, TopicState
 from app.storage.sqlite_store import SQLiteStore
 from app.time_utils import ensure_taipei, is_regular_tw_session, market_date, taipei_now
 
@@ -508,6 +508,81 @@ class InMemoryRepository:
             market_data_time=self.last_debug_summary.market_data_time if self.last_debug_summary else None,
             data_latency_seconds=self.last_debug_summary.data_latency_seconds if self.last_debug_summary else None,
             realtime_provider=self.last_debug_summary.realtime_provider if self.last_debug_summary else None,
+        )
+
+    def market_status(self, *, next_scan_at: datetime | None = None) -> MarketStatusDTO:
+        now = taipei_now()
+        debug = self.last_debug_summary
+        market_data_time = debug.market_data_time if debug else None
+        if now.weekday() >= 5:
+            session_status = "closed"
+            session_label = "休市"
+        elif now.time() < datetime.strptime("09:00", "%H:%M").time():
+            session_status = "preopen"
+            session_label = "盤前準備"
+        elif is_regular_tw_session(now):
+            session_status = "regular"
+            session_label = "盤中監控"
+        else:
+            session_status = "after_close"
+            session_label = "收盤觀察"
+
+        if not market_data_time:
+            freshness_status = "暫緩"
+            is_realtime_monitoring = False
+            reason = "no_market_data_time"
+            user_message = "尚未取得行情資料，系統會在下一輪掃描後更新。"
+        else:
+            data_time = ensure_taipei(market_data_time)
+            same_market_date = market_date(data_time) == market_date(now)
+            latency = abs((now - data_time).total_seconds())
+            if not same_market_date:
+                freshness_status = "暫緩"
+                is_realtime_monitoring = False
+                reason = "market_data_not_today"
+                user_message = "行情資料不是今日資料，暫停即時提醒。"
+            elif session_status == "preopen":
+                freshness_status = "盤前"
+                is_realtime_monitoring = False
+                reason = "market_not_open_yet"
+                user_message = "尚未開盤，資金異動會在 09:00 後開始累積。"
+            elif session_status == "regular":
+                if debug and debug.is_realtime and latency <= self.settings.stale_seconds:
+                    freshness_status = "即時"
+                    is_realtime_monitoring = True
+                    reason = "realtime_quotes_fresh"
+                    user_message = "盤中監控中，最新資金異動只會使用新行情觸發。"
+                elif latency <= self.settings.stale_seconds:
+                    freshness_status = "延遲"
+                    is_realtime_monitoring = False
+                    reason = "source_not_realtime"
+                    user_message = "目前是延遲或觀察資料，排行可參考，正式即時提醒暫停。"
+                else:
+                    freshness_status = "暫緩"
+                    is_realtime_monitoring = False
+                    reason = "market_data_stale"
+                    user_message = "行情時間過舊，暫停最新資金異動提醒。"
+            elif session_status == "after_close":
+                freshness_status = "收盤"
+                is_realtime_monitoring = False
+                reason = "market_closed"
+                user_message = "目前為收盤觀察資料，不列入即時提醒。"
+            else:
+                freshness_status = "休市"
+                is_realtime_monitoring = False
+                reason = "market_closed"
+                user_message = "目前休市，僅保留最近行情觀察。"
+
+        return MarketStatusDTO(
+            session_status=session_status,
+            session_label=session_label,
+            freshness_status=freshness_status,
+            is_realtime_monitoring=is_realtime_monitoring,
+            market_data_time=market_data_time,
+            last_scan_at=self.last_scan_at,
+            next_scan_at=next_scan_at,
+            reason=reason,
+            user_message=user_message,
         )
 
     def stock_detail(self, code: str) -> dict | None:

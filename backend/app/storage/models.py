@@ -341,6 +341,18 @@ class MarketFlowDTO(BaseModel):
     realtime_provider: str | None = None
 
 
+class MarketStatusDTO(BaseModel):
+    session_status: Literal["preopen", "regular", "after_close", "closed", "unknown"]
+    session_label: str
+    freshness_status: Literal["即時", "延遲", "收盤", "盤前", "休市", "暫緩"]
+    is_realtime_monitoring: bool
+    market_data_time: datetime | None = None
+    last_scan_at: datetime | None = None
+    next_scan_at: datetime | None = None
+    reason: str
+    user_message: str
+
+
 class RankingItemDTO(BaseModel):
     stock_id: str | None = None
     stock_name: str | None = None

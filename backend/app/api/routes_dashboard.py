@@ -23,6 +23,7 @@ def health():
     status = scheduler_status()
     debug = repo.latest_scan_debug()
     market_flow = repo.market_flow()
+    market_status = repo.market_status(next_scan_at=status["next_run_time"])
     push_blocked_reason = market_flow.push_blocked_reason
     return {
         "ok": True,
@@ -47,6 +48,7 @@ def health():
         "stock_signal_enabled": repo.settings.stock_signal_enabled,
         "observation_mode": not market_flow.formal_grade,
         "push_blocked_reason": push_blocked_reason,
+        "market_status": market_status,
     }
 
 
