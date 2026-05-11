@@ -339,6 +339,9 @@ class MarketFlowDTO(BaseModel):
     market_data_time: datetime | None = None
     data_latency_seconds: int | None = None
     realtime_provider: str | None = None
+    scan_id: str | None = None
+    snapshot_id: str | None = None
+    batch_label: str | None = None
 
 
 class MarketStatusDTO(BaseModel):

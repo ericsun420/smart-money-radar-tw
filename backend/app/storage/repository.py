@@ -215,12 +215,38 @@ class InMemoryRepository:
             self.store.save_latest_scan(self.last_debug_summary)
         return marked
 
+    def current_scan_id(self) -> str | None:
+        if not self.last_debug_summary:
+            return None
+        return self.last_debug_summary.scan_started_at.isoformat()
+
+    def current_snapshot_id(self) -> str | None:
+        if not self.last_debug_summary:
+            return None
+        data_time = self.last_debug_summary.market_data_time or self.last_debug_summary.source_ts or self.last_debug_summary.scan_started_at
+        return f"{self.last_debug_summary.market_date}:{ensure_taipei(data_time).isoformat()}:{self.last_debug_summary.result_count}"
+
+    def current_batch_label(self) -> str:
+        if not self.last_debug_summary:
+            return "尚未取得資料"
+        data_time = self.last_debug_summary.market_data_time or self.last_debug_summary.source_ts or self.last_debug_summary.scan_started_at
+        return ensure_taipei(data_time).strftime("%m/%d %H:%M")
+
+    def _current_scan_signals(self, signals: list[SignalEvent]) -> list[SignalEvent]:
+        if not self.last_debug_summary:
+            return []
+        scan_started = ensure_taipei(self.last_debug_summary.scan_started_at)
+        return [signal for signal in signals if ensure_taipei(signal.timestamp) >= scan_started]
+
     def dashboard(self, *, official_full_only: bool = False) -> dict:
         rankings = self.rankings(official_full_only=official_full_only)
-        source_status = self.last_debug_summary.source_status if self.last_debug_summary else "unknown"
         market_flow = self.market_flow()
         return {
             "updated_at": self.last_scan_at,
+            "scan_id": self.current_scan_id(),
+            "snapshot_id": self.current_snapshot_id(),
+            "batch_label": self.current_batch_label(),
+            "is_empty": not bool(self.stock_flows),
             "stock_signal_enabled": self.settings.stock_signal_enabled,
             "observation_mode": not market_flow.formal_grade,
             "push_blocked_reason": market_flow.push_blocked_reason,
@@ -283,13 +309,16 @@ class InMemoryRepository:
             topic_states=self.topic_states,
             net_near_zero_ratio=self.settings.net_near_zero_ratio,
         )
-        signals = self._latest_signal_cards(self.signals)
+        signals = self._latest_signal_cards(self._current_scan_signals(self.signals))
         if official_full_only:
             topics = [t for t in topics if t.formal_grade and t.data_quality_bucket in {"official_full", "official_intraday"}]
             flows = [f for f in flows if f.formal_grade and f.data_quality_bucket in {"official_full", "official_intraday"}]
             signals = [s for s in signals if s.formal_grade and s.data_quality_bucket in {"official_full", "official_intraday"}]
         return {
             "updated_at": self.last_scan_at,
+            "scan_id": self.current_scan_id(),
+            "snapshot_id": self.current_snapshot_id(),
+            "batch_label": self.current_batch_label(),
             "ranking_basis": {
                 "stock_inflow_top50": "display_signed_flow_yi cumulative estimated_flow descending",
                 "stock_outflow_top50": "display_signed_flow_yi cumulative estimated_flow ascending",
@@ -536,6 +565,9 @@ class InMemoryRepository:
             market_data_time=self.last_debug_summary.market_data_time if self.last_debug_summary else None,
             data_latency_seconds=self.last_debug_summary.data_latency_seconds if self.last_debug_summary else None,
             realtime_provider=self.last_debug_summary.realtime_provider if self.last_debug_summary else None,
+            scan_id=self.current_scan_id(),
+            snapshot_id=self.current_snapshot_id(),
+            batch_label=self.current_batch_label(),
         )
 
     def market_status(self, *, next_scan_at: datetime | None = None) -> MarketStatusDTO:

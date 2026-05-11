@@ -34,6 +34,8 @@ let topLimit = 5;
 let dashboardScrollY = 0;
 let previousTab = "dashboard";
 let dashboardRetryTimer = null;
+let lastDashboardScanId = null;
+const RECENT_SEARCH_KEY = "SMART_MONEY_RECENT_SEARCHES";
 
 async function getJson(path) {
   const response = await fetch(path);
@@ -108,6 +110,37 @@ function stockSummaryCard(detail) {
   </section>`;
 }
 
+function getRecentSearches() {
+  try {
+    return JSON.parse(localStorage.getItem(RECENT_SEARCH_KEY) || "[]").filter(Boolean).slice(0, 8);
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentSearch(query, stock) {
+  const label = stock?.code && stock?.name ? `${stock.code} ${stock.name}` : query;
+  const item = { query: stock?.code || query, label };
+  const next = [item, ...getRecentSearches().filter((old) => old.query !== item.query)].slice(0, 8);
+  localStorage.setItem(RECENT_SEARCH_KEY, JSON.stringify(next));
+  renderRecentSearches();
+}
+
+function renderRecentSearches() {
+  const target = $("recentSearches");
+  if (!target) return;
+  const items = getRecentSearches();
+  target.innerHTML = items.length
+    ? `<div class="recent-title">最近查詢</div>${items.map((item) => `<button type="button" class="recent-chip" data-recent-stock="${h(item.query)}">${h(item.label)}</button>`).join("")}`
+    : "";
+  target.querySelectorAll("[data-recent-stock]").forEach((button) => {
+    button.onclick = () => {
+      $("stockCode").value = button.dataset.recentStock;
+      searchStock(button.dataset.recentStock);
+    };
+  });
+}
+
 function topicRankList(title, rows, type, limit = 5) {
   const visibleRows = (rows || []).slice(0, limit);
   const body = visibleRows.length ? visibleRows.map((row, index) => `
@@ -156,6 +189,8 @@ function overviewCard(health, market, queue, marketStatus) {
   const stats = queue.stats || {};
   const pushPauseReason = market["push_" + "blocked_" + "reason"];
   const observation = pushPauseReason ? `<div class="mode">觀察模式：目前僅供盤中觀察，正式推播已暫停。</div>` : "";
+  const batch = health.batch_label || market.batch_label || "-";
+  const snapshot = health.snapshot_id || market.snapshot_id || "-";
   return `<section class="card">
     <h2>即時資金流向</h2>
     ${marketStatusCard(marketStatus || {})}
@@ -167,7 +202,10 @@ function overviewCard(health, market, queue, marketStatus) {
       <span>掃描間隔<b>${Number(health.scan_interval_minutes || 0)} 分鐘</b></span>
       <span>下次更新<b>${timeText(health.scheduler_next_run_time)}</b></span>
       <span>推播佇列<b>${Number(stats.pending || 0)} 待推播 / ${Number(stats.sent || 0)} 已推播</b></span>
+      <span>資料批次<b>${h(batch)}</b></span>
+      <span>批次狀態<b>${health.is_empty ? "同步中" : "已載入"}</b></span>
     </div>
+    <div class="batch-note">本頁行情、排行榜與提醒使用同一批資料：${h(snapshot)}</div>
     ${observation}
   </section>`;
 }
@@ -235,8 +273,15 @@ async function loadDashboard() {
       dashboardRetryTimer = null;
       setRefreshStatus(`資料已載入，資料時間 ${health.market_data_time ? timeText(health.market_data_time) : timeText(dashboard.updated_at)}。`, "ok");
     }
+    lastDashboardScanId = dashboard.scan_id || health.scan_id || lastDashboardScanId;
     $("updated").textContent = `更新 ${timeText(dashboard.updated_at)}`;
     $("overview").innerHTML = overviewCard(health, market, queue || { stats: {} }, marketStatus);
+    if (dashboard.is_empty || Number(health.result_count || 0) === 0) {
+      $("rankings").innerHTML = `<section class="card empty-state"><h2>資料同步中</h2><p>服務剛啟動，正在抓取第一輪市場資料。畫面會自動重試；若你剛開 Render，通常需要一小段時間醒來。</p></section>`;
+      $("signals").innerHTML = `<section class="card empty-state"><h2>最新資金異動提醒</h2><p>第一輪掃描完成後，這裡只會顯示本輪新增的資金異動。</p></section>`;
+      bindClicks();
+      return;
+    }
     $("rankings").innerHTML = `
       <section class="card"><h2>類股雷達掃描</h2><div class="split">
         ${topicRankList("資金流入 TOP5", rankings.topic_inflow_top50 || [], "in")}
@@ -277,6 +322,7 @@ async function refreshNow() {
   setRefreshBusy(true);
   setRefreshStatus("同步中，正在重新讀取最新資金資料...");
   let scanMessage = "";
+  const previousScanId = lastDashboardScanId;
   try {
     try {
       await postJson("/api/scan/run");
@@ -288,7 +334,9 @@ async function refreshNow() {
     const health = await getJson("/api/health");
     const dataTime = health.market_data_time ? `資料時間 ${timeText(health.market_data_time)}` : "資料時間 -";
     const nextTime = health.scheduler_next_run_time ? `下一輪 ${timeText(health.scheduler_next_run_time)}` : "";
-    setRefreshStatus(`${scanMessage}，${dataTime}${nextTime ? `，${nextTime}` : ""}。`, "ok");
+    const changed = health.scan_id && previousScanId && health.scan_id !== previousScanId;
+    const changedText = changed ? "已取得新一輪資料" : "資料尚未換新批次";
+    setRefreshStatus(`${scanMessage}，${changedText}，${dataTime}${nextTime ? `，${nextTime}` : ""}。`, "ok");
   } catch (error) {
     setRefreshStatus(`刷新失敗：${error?.message || error}`, "error");
   } finally {
@@ -321,6 +369,7 @@ async function searchStock(query) {
   }
   try {
     const detail = await getJson(`/api/stocks/${encodeURIComponent(normalized)}`);
+    saveRecentSearch(normalized, detail.stock_info || {});
     $("stockResult").innerHTML = `${stockSummaryCard(detail)}
     <section class="card">
       <h2>今日資金異動（點題材查看詳細名單）</h2>
@@ -394,7 +443,7 @@ function showTab(tabName, options = {}) {
   document.querySelector(`[data-tab="${tabName}"]`)?.classList.add("active");
   document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.add("hidden"));
   $(tabName).classList.remove("hidden");
-  $("backToDashboard")?.classList.toggle("hidden", tabName !== "search" || (!options.fromStockClick && previousTab !== "dashboard"));
+  $("backToDashboard")?.classList.toggle("hidden", tabName !== "search");
   if (tabName === "dashboard") {
     requestAnimationFrame(() => window.scrollTo({ top: dashboardScrollY, behavior: options.instant ? "auto" : "smooth" }));
   } else {
@@ -415,6 +464,7 @@ $("stockForm").onsubmit = (event) => {
   event.preventDefault();
   searchStock($("stockCode").value);
 };
+renderRecentSearches();
 $("closeSheet").onclick = () => $("sheet").classList.add("hidden");
 $("sheet").onclick = (event) => {
   if (event.target.id === "sheet") $("sheet").classList.add("hidden");
