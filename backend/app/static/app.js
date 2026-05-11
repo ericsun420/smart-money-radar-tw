@@ -19,6 +19,16 @@ const directionClass = (direction) => direction === "INFLOW" ? "red" : direction
 const levelText = (level) => ({ weak: "弱", normal: "一般", strong: "強", very_strong: "熱門" }[level] || level || "一般");
 const flowAmount = (row) => Number(row.stock_flow_proxy_amount ?? row.display_signed_flow_yi ?? 0);
 const deltaProxy = (row) => Number(row.previous_delta_proxy_amount ?? row.delta_signed_flow_yi ?? row.delta_yi ?? 0);
+const unknownTopicValues = new Set(["", "-", "Unclassified", "未分類", "undefined", "null"]);
+const isUnknownTopic = (value) => unknownTopicValues.has(String(value ?? "").trim());
+const cleanTopics = (topics = []) => [...new Set((topics || []).map((topic) => String(topic || "").trim()).filter((topic) => !isUnknownTopic(topic)))];
+const displayTopicName = (value, fallback = "個股資金異動") => isUnknownTopic(value) ? fallback : String(value);
+const displayIndustryName = (value) => isUnknownTopic(value) ? "未分類" : String(value);
+const topicsText = (topics) => {
+  const cleaned = cleanTopics(topics);
+  return cleaned.length ? cleaned.join(" / ") : "題材資料待補";
+};
+const quoteDateTime = (value) => value ? new Date(value).toLocaleString("zh-TW", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "-";
 
 let topLimit = 5;
 let dashboardScrollY = 0;
@@ -60,6 +70,42 @@ function previousChangeText(value, direction) {
   if (!amount) return "";
   const label = direction === "OUTFLOW" || amount < 0 ? "較上次流出" : "較上次流入";
   return `${label} ${yi(Math.abs(amount), true)}`;
+}
+
+function currentFlowAmount(flow) {
+  return Number(flow?.stock_flow_proxy_amount ?? flow?.display_signed_flow_yi ?? flow?.signed_flow_yi ?? flow?.trade_value_yi ?? 0);
+}
+
+function stockSummaryCard(detail) {
+  const stock = detail.stock_info || {};
+  const flow = detail.current_flow || {};
+  const topicList = cleanTopics(detail.topics || [stock.primary_theme, stock.official_industry, ...(stock.themes || [])]);
+  const direction = flow.direction || stock.flow_direction || "NEUTRAL";
+  const amount = Math.abs(currentFlowAmount(flow));
+  const quoteTime = stock.market_data_time || stock.source_ts || stock.timestamp || flow.quote_time || flow.timestamp;
+  const industry = displayIndustryName(stock.official_industry || stock.industry);
+  const primaryTheme = displayTopicName(stock.primary_theme || topicList[0], topicList.length ? topicList[0] : "題材資料待補");
+  return `<section class="stock-card stock-profile">
+    <div class="stock-profile-head">
+      <div>
+        <h2>${h(stock.code || "")} ${h(stock.name || "")}</h2>
+        <p>${h(industry)}｜${h(primaryTheme)}</p>
+      </div>
+      <div class="${directionClass(direction)} stock-profile-flow">${directionText(direction)}<b>${yi(amount, false)}</b></div>
+    </div>
+    <div class="metric-grid compact stock-profile-grid">
+      <span>最新價<b>${stock.price ?? "-"}</b></span>
+      <span>漲跌幅<b class="${Number(stock.change_pct || 0) >= 0 ? "red" : "green"}">${pct(stock.change_pct)}</b></span>
+      <span>成交金額<b>${yi(stock.trade_value_yi, false)}</b></span>
+      <span>資料時間<b>${h(quoteDateTime(quoteTime))}</b></span>
+      <span>官方產業<b>${h(industry)}</b></span>
+      <span>異動次數<b>${Number(detail.signal_count || 0)} 次</b></span>
+    </div>
+    <div class="topic-summary">
+      <span>所屬題材：${topicList.length ? `${topicList.length} 個` : "資料待補"}</span>
+      <b>${h(topicsText(topicList))}</b>
+    </div>
+  </section>`;
 }
 
 function topicRankList(title, rows, type, limit = 5) {
@@ -253,12 +299,14 @@ async function refreshNow() {
 function stockSignalCard(signal) {
   const price = signal.price ?? "-";
   const deltaText = previousChangeText(signal.previous_delta_proxy_amount, signal.direction);
-  return `<button class="signal stock-signal" data-topic="${h(signal.topic_name)}">
+  const topicName = displayTopicName(signal.topic_name);
+  const canOpenTopic = !isUnknownTopic(signal.topic_name) && topicName !== "個股資金異動";
+  return `<button class="signal stock-signal" ${canOpenTopic ? `data-topic="${h(signal.topic_name)}"` : ""}>
     <div class="signal-row">
-      <b>${h(signal.topic_name || "題材異動")} <span class="chip">${h(levelText(signal.signal_level))}</span></b>
-      <span>${price}</span>
+      <b>${h(topicName)} <span class="chip">${h(levelText(signal.signal_level))}</span></b>
+      <span>最新價 ${price}</span>
       <span>${timeText(signal.timestamp)}</span>
-      <span class="arrow">›</span>
+      <span class="arrow">${canOpenTopic ? "›" : ""}</span>
     </div>
     <div class="${directionClass(signal.direction)}">${directionText(signal.direction)} ${yi(signal.stock_flow_proxy_amount, false)}　題材淨額：${yi(signal.topic_net_proxy_amount)}</div>
     ${deltaText ? `<div class="${directionClass(signal.direction)}">${h(deltaText)}</div>` : ""}
@@ -273,14 +321,7 @@ async function searchStock(query) {
   }
   try {
     const detail = await getJson(`/api/stocks/${encodeURIComponent(normalized)}`);
-    const stock = detail.stock_info;
-    $("stockResult").innerHTML = `<section class="stock-card summary-card">
-      <div class="summary-line">
-        <span>所屬題材：${Number(detail.topics.length || 0)} 個</span>
-        <span>異動次數：${Number(detail.signal_count || 0)} 次</span>
-      </div>
-      <div>題材：${h(detail.topics.join(" / ") || "-")}</div>
-    </section>
+    $("stockResult").innerHTML = `${stockSummaryCard(detail)}
     <section class="card">
       <h2>今日資金異動（點題材查看詳細名單）</h2>
       ${detail.signal_cards.length ? detail.signal_cards.map(stockSignalCard).join("") : "今日尚無資金異動"}
@@ -295,7 +336,8 @@ async function openTopic(topicName) {
   if (!topicName) return;
   const detail = await getJson(`/api/topics/${encodeURIComponent(topicName)}`);
   const topic = detail.topic_flow;
-  const titleLine = `【${levelText(topic.signal_level)}】異動 ${topic.topic_name} ${directionText(topic.direction)}${directionArrow(topic.direction)} ${timeText(topic.timestamp)}`;
+  const safeTopicName = displayTopicName(topic.topic_name);
+  const titleLine = `【${levelText(topic.signal_level)}】異動 ${safeTopicName} ${directionText(topic.direction)}${directionArrow(topic.direction)} ${timeText(topic.timestamp)}`;
   $("sheetBody").innerHTML = `
     <div class="sheet-title">
       <h2>${h(titleLine)}</h2>

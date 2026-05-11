@@ -656,7 +656,7 @@ class InMemoryRepository:
         code = snapshot.code
         flow = self.stock_flows.get(code)
         stock_topics = [
-            topic for topic in [snapshot.official_industry or snapshot.industry, *snapshot.themes]
+            topic for topic in [snapshot.official_industry or snapshot.industry, snapshot.primary_theme, *snapshot.themes]
             if topic and topic not in {"Unclassified", "未分類"}
         ]
         signal_history = [
@@ -679,7 +679,7 @@ class InMemoryRepository:
         flow = self.stock_flows.get(code)
         return SignalCardDTO(
             id=signal.id,
-            topic_name=signal.target_id if signal.target_type == "topic" else signal.topic_name or ((flow.primary_theme or flow.industry) if flow else ""),
+            topic_name=self._signal_display_topic(signal, flow),
             target_type=signal.target_type,
             signal_level=signal.signal_level,
             timestamp=signal.timestamp,
@@ -699,6 +699,19 @@ class InMemoryRepository:
             formal_grade=signal.formal_grade,
             blocked_reason=signal.blocked_reason,
         )
+
+    def _signal_display_topic(self, signal: SignalEvent, flow: StockFlow | None) -> str:
+        candidates = [
+            signal.target_id if signal.target_type == "topic" else None,
+            signal.topic_name,
+            flow.primary_theme if flow else None,
+            flow.official_industry if flow else None,
+            flow.industry if flow else None,
+        ]
+        for topic in candidates:
+            if topic and topic not in {"Unclassified", "未分類"}:
+                return topic
+        return "個股資金異動"
 
     def topic_detail(self, topic_name: str) -> dict | None:
         topic = self.topic_flows.get(topic_name)
