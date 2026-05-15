@@ -320,22 +320,29 @@ async function loadDashboard() {
 
 async function refreshNow() {
   setRefreshBusy(true);
-  setRefreshStatus("同步中，正在重新讀取最新資金資料...");
-  let scanMessage = "";
+  setRefreshStatus("同步中，正在掃描最新資金資料...");
+  let scanResult = null;
   const previousScanId = lastDashboardScanId;
   try {
     try {
-      await postJson("/api/scan/run");
-      scanMessage = "已完成手動掃描";
+      scanResult = await postJson("/api/scan/run");
     } catch (error) {
-      scanMessage = "已重新載入最新畫面";
+      scanResult = { scan_started: false, reason: "scan_request_failed" };
     }
     await loadDashboard();
     const health = await getJson("/api/health");
     const dataTime = health.market_data_time ? `資料時間 ${timeText(health.market_data_time)}` : "資料時間 -";
     const nextTime = health.scheduler_next_run_time ? `下一輪 ${timeText(health.scheduler_next_run_time)}` : "";
-    const changed = health.scan_id && previousScanId && health.scan_id !== previousScanId;
-    const changedText = changed ? "已取得新一輪資料" : "資料尚未換新批次";
+    const changed = Boolean(scanResult?.batch_changed || (health.scan_id && previousScanId && health.scan_id !== previousScanId));
+    let scanMessage = "已重新載入最新畫面";
+    if (scanResult?.scan_started) {
+      scanMessage = scanResult.forced_opening_scan ? "已補抓開盤資料" : "已重新掃描";
+    } else if (scanResult?.reason === "manual_scan_cooldown") {
+      scanMessage = `剛掃描過，${scanResult.cooldown_seconds || 30} 秒後可再掃描`;
+    }
+    const changedText = changed
+      ? "已取得新一輪資料"
+      : (scanResult?.scan_started ? "已掃描，但資料來源尚未更新" : "資料批次未變");
     setRefreshStatus(`${scanMessage}，${changedText}，${dataTime}${nextTime ? `，${nextTime}` : ""}。`, "ok");
   } catch (error) {
     setRefreshStatus(`刷新失敗：${error?.message || error}`, "error");

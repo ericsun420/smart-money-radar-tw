@@ -167,6 +167,10 @@ def can_write(request: Request) -> bool:
     return is_local_request(request) or request_has_admin(request)
 
 
+def can_manual_scan_with_access_token(request: Request) -> bool:
+    return request.method == "POST" and request.url.path == "/api/scan/run"
+
+
 def cookie_should_be_secure(request: Request) -> bool:
     return (
         request.url.scheme == "https"
@@ -251,7 +255,12 @@ async def smart_money_access_guard(request: Request, call_next):
         return await call_next(request)
     if not request_has_access(request, token):
         return unauthorized_response(request)
-    if request.method in WRITE_METHODS and request.url.path.startswith("/api/") and not can_write(request):
+    if (
+        request.method in WRITE_METHODS
+        and request.url.path.startswith("/api/")
+        and not can_write(request)
+        and not can_manual_scan_with_access_token(request)
+    ):
         return JSONResponse({"detail": "Smart Money Radar admin token required"}, status_code=403)
     if is_rate_limited(request):
         return JSONResponse({"detail": "rate limit exceeded"}, status_code=429)

@@ -1,10 +1,29 @@
+from datetime import datetime, time
+from math import ceil
+
 from fastapi import APIRouter
 
 from app.scheduler import scheduler_status
 from app.storage.repository import repo
+from app.time_utils import TAIPEI_TZ, ensure_taipei, market_date, taipei_now
 
 router = APIRouter(prefix="/api", tags=["dashboard"])
 FORMAL_SOURCE_STATUSES = {"official_full", "official_intraday"}
+MANUAL_SCAN_COOLDOWN_SECONDS = 30
+_last_manual_scan_at: datetime | None = None
+
+
+def _needs_opening_rescan(now: datetime) -> bool:
+    if now.weekday() >= 5:
+        return False
+    opening = datetime.combine(now.date(), time(9, 0), tzinfo=TAIPEI_TZ)
+    if now < opening:
+        return False
+    debug = repo.latest_scan_debug()
+    if not debug or not debug.market_data_time:
+        return True
+    data_time = ensure_taipei(debug.market_data_time)
+    return market_date(data_time) == market_date(now) and data_time < opening
 
 
 @router.get("/dashboard/latest")
@@ -14,8 +33,41 @@ def latest_dashboard(official_full_only: bool = False):
 
 @router.post("/scan/run")
 def run_scan():
+    global _last_manual_scan_at
+    now = taipei_now()
+    forced_opening_scan = _needs_opening_rescan(now)
+    if _last_manual_scan_at and not forced_opening_scan:
+        elapsed = (now - ensure_taipei(_last_manual_scan_at)).total_seconds()
+        if elapsed < MANUAL_SCAN_COOLDOWN_SECONDS:
+            remaining = ceil(MANUAL_SCAN_COOLDOWN_SECONDS - elapsed)
+            return {
+                "ok": True,
+                "scan_started": False,
+                "reason": "manual_scan_cooldown",
+                "cooldown_seconds": remaining,
+                "updated_at": repo.last_scan_at,
+                "scan_id": repo.current_scan_id(),
+                "snapshot_id": repo.current_snapshot_id(),
+                "batch_label": repo.current_batch_label(),
+            }
+    previous_scan_id = repo.current_scan_id()
+    previous_snapshot_id = repo.current_snapshot_id()
     repo.scan()
-    return {"ok": True, "updated_at": repo.last_scan_at}
+    _last_manual_scan_at = now
+    current_scan_id = repo.current_scan_id()
+    current_snapshot_id = repo.current_snapshot_id()
+    return {
+        "ok": True,
+        "scan_started": True,
+        "forced_opening_scan": forced_opening_scan,
+        "updated_at": repo.last_scan_at,
+        "scan_id": current_scan_id,
+        "previous_scan_id": previous_scan_id,
+        "snapshot_id": current_snapshot_id,
+        "previous_snapshot_id": previous_snapshot_id,
+        "batch_changed": bool(current_snapshot_id and previous_snapshot_id and current_snapshot_id != previous_snapshot_id),
+        "batch_label": repo.current_batch_label(),
+    }
 
 
 @router.get("/health")

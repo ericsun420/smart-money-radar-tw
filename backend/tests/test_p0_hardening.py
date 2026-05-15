@@ -858,11 +858,12 @@ def test_public_access_token_redirect_and_read_only_writes(monkeypatch):
         assert first.status_code == 303
         assert "smart_money_access" in first.headers.get("set-cookie", "")
         assert client.get("/api/health", headers={"x-smart-money-token": "user-token"}).status_code == 200
-        denied = client.post(
+        manual_scan = client.post(
             "/api/scan/run",
             headers={"x-smart-money-token": "user-token", "x-forwarded-for": "203.0.113.10"},
         )
-        assert denied.status_code == 403
+        assert manual_scan.status_code == 200
+        assert "scan_started" in manual_scan.json()
     with TestClient(app, follow_redirects=False) as fresh_client:
         assert fresh_client.get("/api/health").status_code == 401
 
@@ -877,8 +878,8 @@ def test_admin_token_can_write_from_public_headers(monkeypatch):
         "x-forwarded-for": "203.0.113.10",
     }
     with TestClient(app) as client:
-        denied = client.post("/api/scan/run", headers=public_headers)
-        assert denied.status_code == 403
+        manual_scan = client.post("/api/scan/run", headers=public_headers)
+        assert manual_scan.status_code == 200
         allowed = client.post("/api/scan/run", headers=admin_headers)
         assert allowed.status_code == 200
 
