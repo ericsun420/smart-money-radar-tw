@@ -355,6 +355,9 @@ class MarketStatusDTO(BaseModel):
     next_scan_at: datetime | None = None
     reason: str
     user_message: str
+    scan_id: str | None = None
+    snapshot_id: str | None = None
+    batch_label: str | None = None
 
 
 class RankingItemDTO(BaseModel):

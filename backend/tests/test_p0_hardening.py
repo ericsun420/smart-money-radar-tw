@@ -475,6 +475,29 @@ def test_market_flow_endpoint_and_name_search_contract():
         assert by_name.json()["stock_info"]["code"] == "3035"
 
 
+def test_public_payloads_expose_same_batch_identity():
+    radar = InMemoryRepository(store=make_test_db("batch-meta"), use_provider=False)
+    expected_snapshot = radar.current_snapshot_id()
+    expected_scan = radar.current_scan_id()
+    dashboard = radar.dashboard()
+    topic_name = (dashboard["topic_inflow_top5"] or dashboard["topic_outflow_top5"])[0].topic_name
+
+    market = radar.market_flow()
+    status = radar.market_status()
+    rankings = radar.rankings()
+    stock = radar.stock_detail("3035")
+    topic = radar.topic_detail(topic_name)
+
+    assert market.snapshot_id == expected_snapshot
+    assert market.scan_id == expected_scan
+    assert status.snapshot_id == expected_snapshot
+    assert status.scan_id == expected_scan
+    for payload in [rankings, dashboard, stock, topic]:
+        assert payload["snapshot_id"] == expected_snapshot
+        assert payload["scan_id"] == expected_scan
+        assert payload["batch_label"] == radar.current_batch_label()
+
+
 def test_market_status_endpoint_contract():
     with TestClient(app) as client:
         response = client.get("/api/market/status")

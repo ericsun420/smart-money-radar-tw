@@ -232,6 +232,13 @@ class InMemoryRepository:
         data_time = self.last_debug_summary.market_data_time or self.last_debug_summary.source_ts or self.last_debug_summary.scan_started_at
         return ensure_taipei(data_time).strftime("%m/%d %H:%M")
 
+    def current_batch_meta(self) -> dict[str, str | None]:
+        return {
+            "scan_id": self.current_scan_id(),
+            "snapshot_id": self.current_snapshot_id(),
+            "batch_label": self.current_batch_label(),
+        }
+
     def _current_scan_signals(self, signals: list[SignalEvent]) -> list[SignalEvent]:
         if not self.last_debug_summary:
             return []
@@ -660,6 +667,9 @@ class InMemoryRepository:
             next_scan_at=next_scan_at,
             reason=reason,
             user_message=user_message,
+            scan_id=self.current_scan_id(),
+            snapshot_id=self.current_snapshot_id(),
+            batch_label=self.current_batch_label(),
         )
 
     def stock_detail(self, code: str) -> dict | None:
@@ -699,6 +709,7 @@ class InMemoryRepository:
         return {
             "stock_info": snapshot,
             "current_flow": flow,
+            **self.current_batch_meta(),
             "stock_signal_enabled": self.settings.stock_signal_enabled,
             "signal_count": len(signal_history),
             "topics": list(dict.fromkeys(stock_topics)),
@@ -764,7 +775,13 @@ class InMemoryRepository:
             topic_payload["top5_coverage_label"] = "此題材由多檔分散貢獻"
         else:
             topic_payload["top5_coverage_label"] = "前五檔與其他個股共同帶動"
-        return {"topic_flow": topic_payload, "top_impacts": topic.top_impacts, "history": history, "topic_state": self.topic_states.get(topic_name)}
+        return {
+            "topic_flow": topic_payload,
+            "top_impacts": topic.top_impacts,
+            "history": history,
+            "topic_state": self.topic_states.get(topic_name),
+            **self.current_batch_meta(),
+        }
 
     def latest_scan_debug(self) -> ScanDebugSummary | None:
         return self.last_debug_summary

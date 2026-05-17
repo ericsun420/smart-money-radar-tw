@@ -35,6 +35,8 @@ let dashboardScrollY = 0;
 let previousTab = "dashboard";
 let dashboardRetryTimer = null;
 let lastDashboardScanId = null;
+let lastDashboardSnapshotId = null;
+let dashboardNeedsReloadOnReturn = false;
 const RECENT_SEARCH_KEY = "SMART_MONEY_RECENT_SEARCHES";
 
 async function getJson(path) {
@@ -51,6 +53,34 @@ async function postJson(path, body = {}) {
   });
   if (!response.ok) throw new Error(await response.text());
   return response.json();
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function batchIdsFromResponses(responses) {
+  return [...new Set(responses.map((item) => item?.snapshot_id).filter(Boolean))];
+}
+
+async function fetchDashboardBundle() {
+  const officialOnly = "false";
+  return Promise.all([
+    getJson("/api/health"),
+    getJson("/api/market/flow"),
+    getJson("/api/market/status"),
+    getJson(`/api/rankings/latest?official_full_only=${officialOnly}`),
+    getJson(`/api/dashboard/latest?official_full_only=${officialOnly}`),
+    getJson("/api/discord/queue"),
+  ]);
+}
+
+async function fetchConsistentDashboardBundle() {
+  let bundle = await fetchDashboardBundle();
+  let ids = batchIdsFromResponses(bundle.slice(0, 5));
+  if (ids.length <= 1) return { bundle, retried: false };
+  await sleep(350);
+  bundle = await fetchDashboardBundle();
+  ids = batchIdsFromResponses(bundle.slice(0, 5));
+  return { bundle, retried: true, inconsistent: ids.length > 1 };
 }
 
 function setRefreshBusy(isBusy) {
@@ -251,15 +281,11 @@ function feedCard(signal) {
 
 async function loadDashboard() {
   try {
-    const officialOnly = "false";
-    const [health, market, marketStatus, rankings, dashboard, queue] = await Promise.all([
-      getJson("/api/health"),
-      getJson("/api/market/flow"),
-      getJson("/api/market/status"),
-      getJson(`/api/rankings/latest?official_full_only=${officialOnly}`),
-      getJson(`/api/dashboard/latest?official_full_only=${officialOnly}`),
-      getJson("/api/discord/queue"),
-    ]);
+    const { bundle, retried, inconsistent } = await fetchConsistentDashboardBundle();
+    const [health, market, marketStatus, rankings, dashboard, queue] = bundle;
+    if (retried && inconsistent) {
+      setRefreshStatus("資料批次同步中，畫面已重抓一次；若仍不一致，下一輪掃描會自動修正。", "ok");
+    }
     if (!dashboard.updated_at && Number(health.result_count || 0) === 0) {
       if (!dashboardRetryTimer) {
         setRefreshStatus("資料同步中，伺服器剛醒來，稍後會自動重試...", "ok");
@@ -274,6 +300,7 @@ async function loadDashboard() {
       setRefreshStatus(`資料已載入，資料時間 ${health.market_data_time ? timeText(health.market_data_time) : timeText(dashboard.updated_at)}。`, "ok");
     }
     lastDashboardScanId = dashboard.scan_id || health.scan_id || lastDashboardScanId;
+    lastDashboardSnapshotId = dashboard.snapshot_id || health.snapshot_id || lastDashboardSnapshotId;
     $("updated").textContent = `更新 ${timeText(dashboard.updated_at)}`;
     $("overview").innerHTML = overviewCard(health, market, queue || { stats: {} }, marketStatus);
     if (dashboard.is_empty || Number(health.result_count || 0) === 0) {
@@ -376,6 +403,10 @@ async function searchStock(query) {
   }
   try {
     const detail = await getJson(`/api/stocks/${encodeURIComponent(normalized)}`);
+    if (lastDashboardSnapshotId && detail.snapshot_id && detail.snapshot_id !== lastDashboardSnapshotId) {
+      setRefreshStatus("個股資料已切到新批次，返回資金流向時會同步更新首頁。", "ok");
+      dashboardNeedsReloadOnReturn = true;
+    }
     saveRecentSearch(normalized, detail.stock_info || {});
     $("stockResult").innerHTML = `${stockSummaryCard(detail)}
     <section class="card">
@@ -391,6 +422,10 @@ async function searchStock(query) {
 async function openTopic(topicName) {
   if (!topicName) return;
   const detail = await getJson(`/api/topics/${encodeURIComponent(topicName)}`);
+  if (lastDashboardSnapshotId && detail.snapshot_id && detail.snapshot_id !== lastDashboardSnapshotId) {
+    setRefreshStatus("題材明細已切到新批次，返回資金流向時會同步更新首頁。", "ok");
+    dashboardNeedsReloadOnReturn = true;
+  }
   const topic = detail.topic_flow;
   const safeTopicName = displayTopicName(topic.topic_name);
   const titleLine = `【${levelText(topic.signal_level)}】異動 ${safeTopicName} ${directionText(topic.direction)}${directionArrow(topic.direction)} ${timeText(topic.timestamp)}`;
@@ -452,6 +487,10 @@ function showTab(tabName, options = {}) {
   $(tabName).classList.remove("hidden");
   $("backToDashboard")?.classList.toggle("hidden", tabName !== "search");
   if (tabName === "dashboard") {
+    if (dashboardNeedsReloadOnReturn) {
+      dashboardNeedsReloadOnReturn = false;
+      loadDashboard().catch(() => {});
+    }
     requestAnimationFrame(() => window.scrollTo({ top: dashboardScrollY, behavior: options.instant ? "auto" : "smooth" }));
   } else {
     requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: options.instant ? "auto" : "smooth" }));
