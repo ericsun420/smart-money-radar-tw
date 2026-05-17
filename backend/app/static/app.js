@@ -233,11 +233,36 @@ function overviewCard(health, market, queue, marketStatus) {
       <span>下次更新<b>${timeText(health.scheduler_next_run_time)}</b></span>
       <span>推播佇列<b>${Number(stats.pending || 0)} 待推播 / ${Number(stats.sent || 0)} 已推播</b></span>
       <span>資料批次<b>${h(batch)}</b></span>
-      <span>批次狀態<b>${health.is_empty ? "同步中" : "已載入"}</b></span>
+      <span>批次狀態<b>${health.scan_in_progress ? "掃描中" : (health.is_empty ? "同步中" : "已載入")}</b></span>
     </div>
     <div class="batch-note">本頁行情、排行榜與提醒使用同一批資料：${h(snapshot)}</div>
     ${observation}
   </section>`;
+}
+
+function emptyDashboardMessage(health, marketStatus) {
+  if (health.scan_in_progress) {
+    return {
+      title: "正在取得市場資料",
+      body: "伺服器正在跑第一輪掃描，完成後畫面會自動更新。Render 剛醒來時通常會需要一小段時間。",
+    };
+  }
+  if (health.last_scan_error) {
+    return {
+      title: "資料源暫無回應",
+      body: `最近一次掃描失敗：${health.last_scan_error}。可以按右上角重新掃描，或等下一輪排程。`,
+    };
+  }
+  if (marketStatus?.user_message) {
+    return {
+      title: marketStatus.session_label || "目前沒有排行榜資料",
+      body: marketStatus.user_message,
+    };
+  }
+  return {
+    title: "資料同步中",
+    body: "服務剛啟動，正在抓取第一輪市場資料。畫面會自動重試；若你剛開 Render，通常需要一小段時間醒來。",
+  };
 }
 
 function topicCard(topic) {
@@ -304,8 +329,9 @@ async function loadDashboard() {
     $("updated").textContent = `更新 ${timeText(dashboard.updated_at)}`;
     $("overview").innerHTML = overviewCard(health, market, queue || { stats: {} }, marketStatus);
     if (dashboard.is_empty || Number(health.result_count || 0) === 0) {
-      $("rankings").innerHTML = `<section class="card empty-state"><h2>資料同步中</h2><p>服務剛啟動，正在抓取第一輪市場資料。畫面會自動重試；若你剛開 Render，通常需要一小段時間醒來。</p></section>`;
-      $("signals").innerHTML = `<section class="card empty-state"><h2>最新資金異動提醒</h2><p>第一輪掃描完成後，這裡只會顯示本輪新增的資金異動。</p></section>`;
+      const empty = emptyDashboardMessage(health, marketStatus);
+      $("rankings").innerHTML = `<section class="card empty-state"><h2>${h(empty.title)}</h2><p>${h(empty.body)}</p><button class="primary" onclick="refreshNow()">立即重新掃描</button></section>`;
+      $("signals").innerHTML = `<section class="card empty-state"><h2>最新資金異動提醒</h2><p>第一輪掃描完成後，這裡只會顯示本輪新增的資金異動；行情時間過舊時會暫停顯示。</p></section>`;
       bindClicks();
       return;
     }
@@ -364,6 +390,8 @@ async function refreshNow() {
     let scanMessage = "已重新載入最新畫面";
     if (scanResult?.scan_started) {
       scanMessage = scanResult.forced_opening_scan ? "已補抓開盤資料" : "已重新掃描";
+    } else if (scanResult?.reason === "scan_already_running") {
+      scanMessage = "掃描已在進行中";
     } else if (scanResult?.reason === "manual_scan_cooldown") {
       scanMessage = `剛掃描過，${scanResult.cooldown_seconds || 30} 秒後可再掃描`;
     }

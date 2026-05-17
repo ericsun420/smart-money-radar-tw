@@ -52,13 +52,14 @@ def run_scan():
             }
     previous_scan_id = repo.current_scan_id()
     previous_snapshot_id = repo.current_snapshot_id()
-    repo.scan()
+    started_scan = repo.scan()
     _last_manual_scan_at = now
     current_scan_id = repo.current_scan_id()
     current_snapshot_id = repo.current_snapshot_id()
     return {
         "ok": True,
-        "scan_started": True,
+        "scan_started": started_scan,
+        "reason": None if started_scan else "scan_already_running",
         "forced_opening_scan": forced_opening_scan,
         "updated_at": repo.last_scan_at,
         "scan_id": current_scan_id,
@@ -94,6 +95,8 @@ def health():
         "snapshot_id": repo.current_snapshot_id(),
         "batch_label": repo.current_batch_label(),
         "is_empty": not bool(repo.stock_flows),
+        "scan_in_progress": repo.scan_in_progress,
+        "last_scan_error": repo.last_scan_error,
         "cache": "sqlite_wal_state_plus_memory_snapshots",
         "last_scan_at": repo.last_scan_at,
         "scan_interval_minutes": repo.settings.scan_interval_minutes,
@@ -111,3 +114,8 @@ def health():
 @router.get("/debug/latest_scan")
 def latest_scan_debug():
     return repo.latest_scan_debug()
+
+
+@router.get("/debug/data_state")
+def data_state():
+    return repo.data_state()

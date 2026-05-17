@@ -498,6 +498,20 @@ def test_public_payloads_expose_same_batch_identity():
         assert payload["batch_label"] == radar.current_batch_label()
 
 
+def test_debug_data_state_exposes_scan_runtime_and_samples():
+    radar = InMemoryRepository(store=make_test_db("data-state"), use_provider=False)
+    state = radar.data_state()
+
+    assert state["ok"] is True
+    assert state["scan_in_progress"] is False
+    assert state["stock_count"] == len(radar.snapshots)
+    assert state["flow_count"] == len(radar.stock_flows)
+    assert state["snapshot_id"] == radar.current_snapshot_id()
+    assert "errors" in state
+    assert state["sample_snapshots"]
+    assert "ranking_preview" in state
+
+
 def test_market_status_endpoint_contract():
     with TestClient(app) as client:
         response = client.get("/api/market/status")

@@ -58,6 +58,8 @@ class InMemoryRepository:
         self.last_scan_at: datetime | None = None
         self.last_debug_summary: ScanDebugSummary | None = self.store.load_latest_scan()
         self._scan_lock = Lock()
+        self.scan_in_progress = False
+        self.last_scan_error: str | None = None
         if not self.use_provider:
             self.scan()
 
@@ -99,9 +101,10 @@ class InMemoryRepository:
             error_count=len(provider_result.errors),
         )
 
-    def scan(self) -> None:
+    def scan(self) -> bool:
         if not self._scan_lock.acquire(blocking=False):
-            return
+            return False
+        self.scan_in_progress = True
         summary = self.refresh_snapshots_from_provider()
         started = summary.scan_started_at
         try:
@@ -173,14 +176,18 @@ class InMemoryRepository:
                     self.notifications.enqueue_signal(signal, can_send=can_send, blocked_reason=blocked_reason)
             self.store.save_topic_states(self.topic_states)
             self.last_scan_at = started
+            self.last_scan_error = None
+            return True
         except Exception as exc:
             summary.error_count += 1
             summary.errors.append(type(exc).__name__)
+            self.last_scan_error = f"{type(exc).__name__}: {exc}"
             raise
         finally:
             summary.scan_finished_at = taipei_now()
             self.last_debug_summary = summary
             self.store.save_latest_scan(summary)
+            self.scan_in_progress = False
             self._scan_lock.release()
 
     def _latest_signal(self, target_type: str, target_id: str) -> SignalEvent | None:
@@ -785,6 +792,68 @@ class InMemoryRepository:
 
     def latest_scan_debug(self) -> ScanDebugSummary | None:
         return self.last_debug_summary
+
+    def data_state(self) -> dict:
+        debug = self.last_debug_summary
+        sample_codes = ["2330", "2454", "3037", "8299", "5351", "2464"]
+        samples: list[dict] = []
+        seen: set[str] = set()
+        for code in [*sample_codes, *sorted(self.snapshots)[:10]]:
+            if code in seen:
+                continue
+            snapshot = self.snapshots.get(code)
+            if not snapshot:
+                continue
+            seen.add(code)
+            flow = self.stock_flows.get(code)
+            samples.append(
+                {
+                    "code": snapshot.code,
+                    "name": snapshot.name,
+                    "price": snapshot.price,
+                    "change_pct": snapshot.change_pct,
+                    "trade_value_yi": snapshot.trade_value_yi,
+                    "market_date": snapshot.market_date,
+                    "market_data_time": snapshot.market_data_time,
+                    "provider_type": snapshot.provider_type,
+                    "source_status": snapshot.source_status,
+                    "freshness_status": self._freshness_status(snapshot),
+                    "flow_direction": flow.direction if flow else None,
+                    "flow_amount": flow.display_signed_flow_yi if flow else None,
+                }
+            )
+        rankings = self.rankings()
+        return {
+            "ok": True,
+            "scan_in_progress": self.scan_in_progress,
+            "last_scan_error": self.last_scan_error,
+            "stock_count": len(self.snapshots),
+            "flow_count": len(self.stock_flows),
+            "topic_count": len(self.topic_flows),
+            "signal_count": len(self.signals),
+            "scan_id": self.current_scan_id(),
+            "snapshot_id": self.current_snapshot_id(),
+            "batch_label": self.current_batch_label(),
+            "last_scan_at": self.last_scan_at,
+            "source_used": debug.source_used if debug else None,
+            "source_status": debug.source_status if debug else None,
+            "source_ts": debug.source_ts if debug else None,
+            "market_data_time": debug.market_data_time if debug else None,
+            "data_latency_seconds": debug.data_latency_seconds if debug else None,
+            "result_count": debug.result_count if debug else 0,
+            "twse_count": debug.twse_count if debug else 0,
+            "tpex_count": debug.tpex_count if debug else 0,
+            "realtime_count": debug.realtime_count if debug else 0,
+            "error_count": debug.error_count if debug else 0,
+            "errors": debug.errors if debug else [],
+            "sample_snapshots": samples,
+            "ranking_preview": {
+                "stock_inflow_top5": rankings["stock_inflow_top50"][:5],
+                "stock_outflow_top5": rankings["stock_outflow_top50"][:5],
+                "topic_inflow_top5": rankings["topic_inflow_top50"][:5],
+                "topic_outflow_top5": rankings["topic_outflow_top50"][:5],
+            },
+        }
 
     def discord_queue_stats(self) -> dict:
         return self.store.discord_queue_stats()
