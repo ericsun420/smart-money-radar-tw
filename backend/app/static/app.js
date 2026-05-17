@@ -34,10 +34,16 @@ let topLimit = 5;
 let dashboardScrollY = 0;
 let previousTab = "dashboard";
 let dashboardRetryTimer = null;
+let dashboardAutoScanInFlight = false;
+let dashboardAutoPollCount = 0;
+let lastAutoScanAt = 0;
 let lastDashboardScanId = null;
 let lastDashboardSnapshotId = null;
 let dashboardNeedsReloadOnReturn = false;
 const RECENT_SEARCH_KEY = "SMART_MONEY_RECENT_SEARCHES";
+const AUTO_SCAN_COOLDOWN_MS = 60_000;
+const EMPTY_POLL_INTERVAL_MS = 10_000;
+const EMPTY_POLL_LIMIT = 12;
 
 async function getJson(path) {
   const response = await fetch(path);
@@ -95,6 +101,46 @@ function setRefreshStatus(message, tone = "") {
   if (!target) return;
   target.textContent = message || "";
   target.className = `refresh-status ${tone}`.trim();
+}
+
+function scheduleDashboardPoll(message = "資料同步中，稍後自動重試...") {
+  if (dashboardRetryTimer) return;
+  setRefreshStatus(message, "ok");
+  dashboardRetryTimer = setTimeout(() => {
+    dashboardRetryTimer = null;
+    loadDashboard().catch(() => {});
+  }, EMPTY_POLL_INTERVAL_MS);
+}
+
+async function maybeAutoScanEmptyDashboard(health) {
+  if (!health?.is_empty && Number(health?.result_count || 0) > 0) return;
+  if (health?.scan_in_progress || dashboardAutoScanInFlight) {
+    scheduleDashboardPoll("掃描進行中，完成後會自動更新畫面...");
+    return;
+  }
+  const now = Date.now();
+  if (now - lastAutoScanAt < AUTO_SCAN_COOLDOWN_MS) {
+    scheduleDashboardPoll("資料同步中，稍後自動重試...");
+    return;
+  }
+  dashboardAutoScanInFlight = true;
+  lastAutoScanAt = now;
+  setRefreshStatus("目前沒有資料，正在自動補抓第一輪市場資料...", "ok");
+  try {
+    const result = await postJson("/api/scan/run");
+    if (result?.scan_started) {
+      setRefreshStatus("已啟動補掃，正在等待市場資料回來...", "ok");
+    } else if (result?.reason === "scan_already_running") {
+      setRefreshStatus("掃描已在進行中，完成後會自動更新畫面...", "ok");
+    } else if (result?.reason === "manual_scan_cooldown") {
+      setRefreshStatus(`剛掃描過，${result.cooldown_seconds || 30} 秒後會自動再確認資料。`, "ok");
+    }
+  } catch (error) {
+    setRefreshStatus(`自動補掃暫時失敗，會等待下一輪：${error?.message || error}`, "error");
+  } finally {
+    dashboardAutoScanInFlight = false;
+    scheduleDashboardPoll("等待資料源回應中，稍後自動重試...");
+  }
 }
 
 function previousChangeText(value, direction) {
@@ -311,18 +357,21 @@ async function loadDashboard() {
     if (retried && inconsistent) {
       setRefreshStatus("資料批次同步中，畫面已重抓一次；若仍不一致，下一輪掃描會自動修正。", "ok");
     }
-    if (!dashboard.updated_at && Number(health.result_count || 0) === 0) {
-      if (!dashboardRetryTimer) {
-        setRefreshStatus("資料同步中，伺服器剛醒來，稍後會自動重試...", "ok");
-        dashboardRetryTimer = setTimeout(() => {
-          dashboardRetryTimer = null;
-          loadDashboard();
-        }, 8000);
+    const hasNoMarketData = Boolean(dashboard.is_empty || Number(health.result_count || 0) === 0);
+    if (hasNoMarketData) {
+      dashboardAutoPollCount += 1;
+      if (dashboardAutoPollCount <= EMPTY_POLL_LIMIT) {
+        maybeAutoScanEmptyDashboard(health);
+      } else {
+        setRefreshStatus("自動重試已暫停，請稍後按右上角重新整理。", "error");
       }
     } else if (dashboardRetryTimer) {
       clearTimeout(dashboardRetryTimer);
       dashboardRetryTimer = null;
+      dashboardAutoPollCount = 0;
       setRefreshStatus(`資料已載入，資料時間 ${health.market_data_time ? timeText(health.market_data_time) : timeText(dashboard.updated_at)}。`, "ok");
+    } else {
+      dashboardAutoPollCount = 0;
     }
     lastDashboardScanId = dashboard.scan_id || health.scan_id || lastDashboardScanId;
     lastDashboardSnapshotId = dashboard.snapshot_id || health.snapshot_id || lastDashboardSnapshotId;
