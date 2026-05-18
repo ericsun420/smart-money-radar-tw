@@ -112,8 +112,14 @@ function scheduleDashboardPoll(message = "資料同步中，稍後自動重試..
   }, EMPTY_POLL_INTERVAL_MS);
 }
 
-async function maybeAutoScanEmptyDashboard(health) {
-  if (!health?.is_empty && Number(health?.result_count || 0) > 0) return;
+function needsAutoScan(health) {
+  const status = health?.market_status || {};
+  if (health?.is_empty || Number(health?.result_count || 0) === 0) return true;
+  return status.session_status === "regular" && status.monitoring_mode === "paused";
+}
+
+async function maybeAutoScanDashboard(health) {
+  if (!needsAutoScan(health)) return;
   if (health?.scan_in_progress || dashboardAutoScanInFlight) {
     scheduleDashboardPoll("掃描進行中，完成後會自動更新畫面...");
     return;
@@ -125,7 +131,7 @@ async function maybeAutoScanEmptyDashboard(health) {
   }
   dashboardAutoScanInFlight = true;
   lastAutoScanAt = now;
-  setRefreshStatus("目前沒有資料，正在自動補抓第一輪市場資料...", "ok");
+  setRefreshStatus("資料尚未更新到可用狀態，正在自動補抓最新市場資料...", "ok");
   try {
     const result = await postJson("/api/scan/run");
     if (result?.scan_started) {
@@ -357,11 +363,11 @@ async function loadDashboard() {
     if (retried && inconsistent) {
       setRefreshStatus("資料批次同步中，畫面已重抓一次；若仍不一致，下一輪掃描會自動修正。", "ok");
     }
-    const hasNoMarketData = Boolean(dashboard.is_empty || Number(health.result_count || 0) === 0);
-    if (hasNoMarketData) {
+    const shouldAutoRecoverData = Boolean(dashboard.is_empty || Number(health.result_count || 0) === 0 || needsAutoScan(health));
+    if (shouldAutoRecoverData) {
       dashboardAutoPollCount += 1;
       if (dashboardAutoPollCount <= EMPTY_POLL_LIMIT) {
-        maybeAutoScanEmptyDashboard(health);
+        maybeAutoScanDashboard(health);
       } else {
         setRefreshStatus("自動重試已暫停，請稍後按右上角重新整理。", "error");
       }
@@ -438,7 +444,7 @@ async function refreshNow() {
     const changed = Boolean(scanResult?.batch_changed || (health.scan_id && previousScanId && health.scan_id !== previousScanId));
     let scanMessage = "已重新載入最新畫面";
     if (scanResult?.scan_started) {
-      scanMessage = scanResult.forced_opening_scan ? "已補抓開盤資料" : "已重新掃描";
+      scanMessage = scanResult.forced_opening_scan || scanResult.forced_freshness_scan ? "已補抓最新資料" : "已重新掃描";
     } else if (scanResult?.reason === "scan_already_running") {
       scanMessage = "掃描已在進行中";
     } else if (scanResult?.reason === "manual_scan_cooldown") {

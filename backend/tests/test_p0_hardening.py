@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
+import app.api.routes_dashboard as routes_dashboard
 from app.data_provider.normalizer import normalize_snapshot
 from app.data_provider.stock_universe import is_common_stock_code
 from app.data_provider.theme_mapping import apply_theme_mapping
@@ -510,6 +511,44 @@ def test_debug_data_state_exposes_scan_runtime_and_samples():
     assert "errors" in state
     assert state["sample_snapshots"]
     assert "ranking_preview" in state
+
+
+def test_opening_refresh_bypasses_cooldown_for_preopen_batch(monkeypatch):
+    class FakeRepo:
+        settings = Settings(stale_seconds=600)
+
+        def latest_scan_debug(self):
+            return ScanDebugSummary(
+                scan_started_at=datetime(2026, 5, 18, 8, 56, tzinfo=TAIPEI_TZ),
+                market_date="2026-05-18",
+                source_used="twse_mis",
+                source_status="official_partial",
+                market_data_time=datetime(2026, 5, 18, 8, 56, tzinfo=TAIPEI_TZ),
+                result_count=1900,
+            )
+
+    monkeypatch.setattr(routes_dashboard, "repo", FakeRepo())
+
+    assert routes_dashboard._needs_freshness_rescan(datetime(2026, 5, 18, 9, 0, tzinfo=TAIPEI_TZ)) is True
+
+
+def test_regular_refresh_bypasses_cooldown_for_stale_batch(monkeypatch):
+    class FakeRepo:
+        settings = Settings(stale_seconds=180)
+
+        def latest_scan_debug(self):
+            return ScanDebugSummary(
+                scan_started_at=datetime(2026, 5, 18, 9, 0, tzinfo=TAIPEI_TZ),
+                market_date="2026-05-18",
+                source_used="twse_mis",
+                source_status="official_partial",
+                market_data_time=datetime(2026, 5, 18, 9, 0, tzinfo=TAIPEI_TZ),
+                result_count=1900,
+            )
+
+    monkeypatch.setattr(routes_dashboard, "repo", FakeRepo())
+
+    assert routes_dashboard._needs_freshness_rescan(datetime(2026, 5, 18, 9, 5, tzinfo=TAIPEI_TZ)) is True
 
 
 def test_market_status_endpoint_contract():

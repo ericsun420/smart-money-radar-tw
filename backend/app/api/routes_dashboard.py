@@ -5,7 +5,7 @@ from fastapi import APIRouter
 
 from app.scheduler import scheduler_status
 from app.storage.repository import repo
-from app.time_utils import TAIPEI_TZ, ensure_taipei, market_date, taipei_now
+from app.time_utils import TAIPEI_TZ, ensure_taipei, is_regular_tw_session, market_date, taipei_now
 
 router = APIRouter(prefix="/api", tags=["dashboard"])
 FORMAL_SOURCE_STATUSES = {"official_full", "official_intraday"}
@@ -26,6 +26,28 @@ def _needs_opening_rescan(now: datetime) -> bool:
     return market_date(data_time) == market_date(now) and data_time < opening
 
 
+def _needs_freshness_rescan(now: datetime) -> bool:
+    """Allow manual refresh to bypass cooldown when the visible quote batch is stale.
+
+    During the opening window the user expects the refresh button to actually
+    ask the provider again, not wait for the next scheduled 5 minute run.
+    """
+
+    if now.weekday() >= 5 or not is_regular_tw_session(now):
+        return False
+    debug = repo.latest_scan_debug()
+    if not debug or not debug.market_data_time or debug.result_count <= 0:
+        return True
+    data_time = ensure_taipei(debug.market_data_time)
+    if market_date(data_time) != market_date(now):
+        return True
+    opening = datetime.combine(now.date(), time(9, 0), tzinfo=TAIPEI_TZ)
+    if data_time < opening:
+        return True
+    age_seconds = (now - data_time).total_seconds()
+    return age_seconds > repo.settings.stale_seconds
+
+
 @router.get("/dashboard/latest")
 def latest_dashboard(official_full_only: bool = False):
     return repo.dashboard(official_full_only=official_full_only)
@@ -36,7 +58,8 @@ def run_scan():
     global _last_manual_scan_at
     now = taipei_now()
     forced_opening_scan = _needs_opening_rescan(now)
-    if _last_manual_scan_at and not forced_opening_scan:
+    forced_freshness_scan = _needs_freshness_rescan(now)
+    if _last_manual_scan_at and not forced_opening_scan and not forced_freshness_scan:
         elapsed = (now - ensure_taipei(_last_manual_scan_at)).total_seconds()
         if elapsed < MANUAL_SCAN_COOLDOWN_SECONDS:
             remaining = ceil(MANUAL_SCAN_COOLDOWN_SECONDS - elapsed)
@@ -61,6 +84,7 @@ def run_scan():
         "scan_started": started_scan,
         "reason": None if started_scan else "scan_already_running",
         "forced_opening_scan": forced_opening_scan,
+        "forced_freshness_scan": forced_freshness_scan,
         "updated_at": repo.last_scan_at,
         "scan_id": current_scan_id,
         "previous_scan_id": previous_scan_id,
