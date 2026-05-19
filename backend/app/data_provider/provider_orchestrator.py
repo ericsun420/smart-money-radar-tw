@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import time
 
 from app.data_provider.mcp_realtime_provider import fetch_mcp_realtime_quotes
 from app.data_provider.seed_data import build_seed_snapshots
@@ -16,6 +17,41 @@ from app.time_utils import is_regular_tw_session, market_date, taipei_now
 
 
 REALTIME_STALE_SECONDS = 600
+
+
+def _prefer_official_close(now) -> bool:
+    """After the close, official daily close data is the source of truth.
+
+    Public realtime proxies can lag, carry provisional last-trade rows, or
+    compute turnover as a proxy. Once the market is closed we should not let
+    those rows override TWSE/TPEx official close quotes.
+    """
+
+    if now.weekday() >= 5:
+        return True
+    return now.time() > time(13, 35)
+
+
+def _official_close_timestamp(now):
+    return now.replace(hour=13, minute=30, second=0, microsecond=0)
+
+
+def _stamp_official_close_snapshots(snapshots: list[StockSnapshot], now) -> list[StockSnapshot]:
+    close_time = _official_close_timestamp(now)
+    latency = max(int((now - close_time).total_seconds()), 0)
+    return [
+        snapshot.model_copy(
+            update={
+                "source_ts": close_time,
+                "market_data_time": close_time,
+                "data_latency_seconds": latency,
+                "is_realtime": False,
+                "is_intraday": False,
+                "realtime_provider": None,
+            }
+        )
+        for snapshot in snapshots
+    ]
 
 
 async def fetch_official_snapshots_async() -> ProviderResult:
@@ -40,7 +76,10 @@ async def fetch_official_snapshots_async() -> ProviderResult:
     daily_snapshots = apply_theme_mappings(daily_snapshots)
     realtime_snapshots: list[StockSnapshot] = []
     realtime_errors: list[str] = []
-    if daily_snapshots:
+    use_intraday_overlay = not _prefer_official_close(now)
+    if daily_snapshots and not use_intraday_overlay:
+        daily_snapshots = _stamp_official_close_snapshots(daily_snapshots, now)
+    if daily_snapshots and use_intraday_overlay:
         realtime_snapshots, realtime_errors = await fetch_mis_quotes_for_snapshots(daily_snapshots, now=now)
         errors.extend(realtime_errors)
 
@@ -87,6 +126,8 @@ async def fetch_official_snapshots_async() -> ProviderResult:
         official_snapshots = daily_snapshots
         source_status = "official_partial" if official_snapshots else "failed"
         source_used = "twse_tpex_official"
+        if daily_snapshots and not use_intraday_overlay:
+            errors.append("official_daily_close_used_after_market_close")
         if realtime_snapshots:
             if realtime_ratio < 0.8:
                 errors.append(f"mis_realtime_coverage_below_threshold:{len(realtime_snapshots)}/{len(daily_snapshots)}")
@@ -178,14 +219,26 @@ def seed_provider_result() -> ProviderResult:
 
 
 def fetch_market_snapshots(*, allow_seed_fallback: bool = False, min_official_count: int = 1500) -> ProviderResult:
+    now = taipei_now()
     prefer_mcp = os.getenv("SMART_MONEY_PREFER_MCP_PROXY", "1").strip().lower() not in {"0", "false", "no"}
     mcp_enabled = os.getenv("SMART_MONEY_ENABLE_MCP_PROXY", "1").strip().lower() not in {"0", "false", "no"}
-    if prefer_mcp and mcp_enabled:
+
+    official_first = _prefer_official_close(now)
+    if official_first:
+        official = fetch_official_snapshots()
+        official_has_twse = official.twse_count > 0
+        if len(official.snapshots) >= min_official_count and official_has_twse:
+            official.errors = [*official.errors, "official_close_preferred_after_market_close"]
+            return official
+    else:
+        official = None
+
+    if not official_first and prefer_mcp and mcp_enabled:
         mcp = fetch_mcp_proxy_snapshots()
         if len(mcp.snapshots) >= min_official_count:
             return mcp
 
-    official = fetch_official_snapshots()
+    official = official or fetch_official_snapshots()
     official_has_twse = official.twse_count > 0
     if len(official.snapshots) >= min_official_count and official_has_twse:
         return official

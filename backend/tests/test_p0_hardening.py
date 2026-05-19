@@ -7,6 +7,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 import app.api.routes_dashboard as routes_dashboard
+import app.data_provider.provider_orchestrator as provider_orchestrator
 from app.data_provider.normalizer import normalize_snapshot
 from app.data_provider.stock_universe import is_common_stock_code
 from app.data_provider.theme_mapping import apply_theme_mapping
@@ -21,7 +22,7 @@ from app.main import app
 from app.notifier.discord import format_discord_message
 from app.notifier.discord_queue import DiscordQueue
 from app.scheduler import SCAN_JOB_ID, scheduler
-from app.storage.models import ScanDebugSummary, Settings, SignalEvent, StockSnapshot, TopicState
+from app.storage.models import ProviderResult, ScanDebugSummary, Settings, SignalEvent, StockSnapshot, TopicState
 from app.storage.repository import InMemoryRepository
 from app.storage.sqlite_store import SQLiteStore
 from app.time_utils import TAIPEI_TZ
@@ -549,6 +550,44 @@ def test_regular_refresh_bypasses_cooldown_for_stale_batch(monkeypatch):
     monkeypatch.setattr(routes_dashboard, "repo", FakeRepo())
 
     assert routes_dashboard._needs_freshness_rescan(datetime(2026, 5, 18, 9, 5, tzinfo=TAIPEI_TZ)) is True
+
+
+def test_after_close_prefers_official_daily_close_over_mcp_proxy(monkeypatch):
+    now = datetime(2026, 5, 19, 18, 10, tzinfo=TAIPEI_TZ)
+    official = ProviderResult(
+        snapshots=[official_snapshot("2330", 2240, 736.55, now)],
+        source_used="twse_tpex_official",
+        source_status="official_partial",
+        source_ts=now,
+        twse_count=1,
+        tpex_count=0,
+    )
+
+    def fail_mcp():
+        raise AssertionError("MCP proxy must not override official close after market close")
+
+    monkeypatch.setattr(provider_orchestrator, "taipei_now", lambda: now)
+    monkeypatch.setattr(provider_orchestrator, "fetch_official_snapshots", lambda: official)
+    monkeypatch.setattr(provider_orchestrator, "fetch_mcp_proxy_snapshots", fail_mcp)
+
+    result = provider_orchestrator.fetch_market_snapshots(min_official_count=1)
+
+    assert result.source_used == "twse_tpex_official"
+    assert result.snapshots[0].code == "2330"
+    assert result.snapshots[0].price == 2240
+    assert "official_close_preferred_after_market_close" in result.errors
+
+
+def test_official_close_snapshots_use_close_time_not_fetch_time():
+    now = datetime(2026, 5, 19, 18, 10, tzinfo=TAIPEI_TZ)
+    snapshot = official_snapshot("2330", 2240, 736.55, now)
+
+    [stamped] = provider_orchestrator._stamp_official_close_snapshots([snapshot], now)
+
+    assert stamped.market_data_time == datetime(2026, 5, 19, 13, 30, tzinfo=TAIPEI_TZ)
+    assert stamped.source_ts == datetime(2026, 5, 19, 13, 30, tzinfo=TAIPEI_TZ)
+    assert stamped.data_latency_seconds == 16800
+    assert stamped.is_realtime is False
 
 
 def test_market_status_endpoint_contract():
