@@ -1,83 +1,45 @@
-# Smart Money Radar 外出手機觀看
+# Smart Money Radar 手機外出觀看
 
-Smart Money Radar 可以用兩種方式在手機觀看：
-
-1. 不買網域固定網址：Tailscale Funnel
-2. 短期測試：Cloudflare quick tunnel
-3. 自有網域：Cloudflare named tunnel + 固定網域
-
-## 建議免費固定網址：Tailscale Funnel
-
-Tailscale Funnel 不需要買網域，會給你固定 `ts.net` HTTPS 網址。
-
-第一次請先安裝並登入 Tailscale：
+目前建議使用 Render 固定網址作為手機外出觀看入口：
 
 ```text
-https://tailscale.com/download/windows
+https://smart-money-radar-tw.onrender.com
 ```
 
-啟動：
-
-```powershell
-.\start_tailscale_funnel.ps1
-```
-
-詳細步驟請看：
+如果部署環境設定了 `SMART_MONEY_ACCESS_TOKEN`，第一次開啟請使用：
 
 ```text
-TAILSCALE_FUNNEL.md
+https://smart-money-radar-tw.onrender.com/?token=你的_ACCESS_TOKEN
 ```
 
-## 自有網域：Cloudflare named tunnel
+成功後瀏覽器會寫入 cookie，之後可直接開 Render 網址。
 
-如果你要外出工作也能穩定觀看，請使用 named tunnel。
+## 權限邊界
 
-第一次設定：
+- 一般 access token：只用於查看資料。
+- admin token：只用於管理設定、推播規則與寫入操作。
+- 手機外出觀看不應使用 admin token。
 
-```powershell
-.\setup_cloudflare_named_tunnel.ps1 -Hostname radar.example.com
-```
+## 推薦方案
 
-日常啟動：
+### Render
 
-```powershell
-.\start_cloudflare_named_tunnel.ps1
-```
+最簡單、固定網址、適合外出查看。缺點是免費方案可能冷啟動，需要等待服務喚醒。
 
-手機網址：
+### Tailscale Funnel
 
-```text
-https://radar.example.com/?token=你的AccessToken
-```
+可用，但需要 Tailscale 管理設定與 Funnel 權限。適合私人使用，不是目前主線部署方式。
 
-詳細步驟請看：
+### Cloudflare quick tunnel
 
-```text
-CLOUDFLARE_NAMED_TUNNEL.md
-```
+只適合短期測試，網址可能變動，不建議作為日常入口。
 
-## 短期測試：quick tunnel
+### Cloudflare named tunnel
 
-quick tunnel 會產生臨時網址，可能失效或更換，只適合測試：
+穩定，但需要自有網域。
 
-```powershell
-.\start_public_tunnel_cloudflare.ps1
-```
+## 資料狀態說明
 
-## 外網安全邊界
-
-外網 access token 只能 read-only：
-
-- 可看首頁
-- 可讀 GET API
-- 不可改設定
-- 不可改推播規則
-- 不可手動掃描
-
-管理操作只允許 localhost 或 admin token。
-
-## 資料狀態
-
-盤中若 TWSE MIS 報價是今天且新鮮，App 會顯示即時資料。
-
-收盤後 App 會使用今日最後可得報價並顯示「收盤」或「觀察模式」，不會冒充盤中即時。
+- 盤中：若公開來源可取得新資料，畫面會顯示準即時觀察。
+- 收盤後：系統應切回 TWSE / TPEx 官方日收盤資料。
+- 若資料源暫停或 Render 剛醒來，首頁會自動補掃並短暫輪詢。

@@ -1,10 +1,10 @@
 # Smart Money Radar 台股即時資金雷達 App 第一版基準
 
-更新日期：2026-04-30
+日期：2026-05-19
 
 ## 產品主線
 
-第一版收斂為台股即時資金雷達 App，只保留五個前台功能：
+本版本收斂為台股資金雷達 App，只保留五個主功能：
 
 1. 即時資金流向
 2. 類股雷達掃描
@@ -12,43 +12,36 @@
 4. 智慧推播提醒
 5. 個股資金查詢
 
-已移除首頁功能介紹卡。產品定位是盤中資金雷達 App，不是交易策略工具、歷史績效工具或單一通知工具。
+產品定位為資金流向觀察 App，主線集中在市場、類股與個股資金動能。
 
-## 本輪即時資料補強
+## 已完成
 
-- 新增 TWSE MIS 盤中即時報價 provider。
-- 以 TWSE / TPEx 官方日資料建立上市櫃股票池，再用 MIS 報價覆蓋盤中價格、量與時間。
-- 新增 `official_intraday` 狀態，用於代表盤中即時報價通過覆蓋率與新鮮度檢查。
-- `/api/health` 與 `/api/market/flow` 增加：
-  - `is_realtime`
-  - `is_intraday`
-  - `realtime_provider`
-  - `market_data_time`
-  - `data_latency_seconds`
-  - `realtime_count`
-- 若 MIS 覆蓋率不足，系統自動退回 `official_partial` 觀察模式。
+- 移除首頁功能介紹卡與不屬於第一版主線的功能文案。
+- 搜尋頁改成空狀態，不預設查詢 3035。
+- 個股查詢支援代號與名稱搜尋。
+- 題材 Bottom Sheet 顯示題材淨額、流入/流出與影響力 TOP5。
+- 首頁、排行榜、個股頁、題材頁回傳同一批 `scan_id / snapshot_id`。
+- Render 冷啟動時，首頁會自動補掃並輪詢等待資料。
+- 開盤後資料還停在盤前或過期時，手動刷新會繞過 cooldown 立即補抓。
+- 收盤後強制優先使用 TWSE / TPEx 官方日收盤資料。
+- 收盤資料行情時間固定標示為 `13:30`，避免用抓取時間誤導。
+- 非正式資料來源維持觀察模式，不做正式推播。
 
-## 重要限制
+## 資料來源規則
 
-- MIS 不是逐筆內外盤資料。
-- 成交金額為推估 proxy，不是真實逐筆成交金額拆解。
-- UI 不宣稱逐筆買賣方向或特定法人交易方向。
-- `official_partial`、fallback、cache-only、seed 不進正式推播。
+- 盤中：使用 TWSE MIS / public proxy 作為準即時觀察。
+- 收盤後：使用 TWSE / TPEx 官方日收盤。
+- 未提供授權即時行情 API 前，只呈現推估資金流與觀察模式。
 
-## 外出觀看
+## 驗證項目
 
-- 已支援 access token read-only 外網模式。
-- 已支援 admin token 寫入保護。
-- Cloudflare quick tunnel 僅供測試。
-- 已新增 Cloudflare named tunnel 固定網域腳本：
-  - `setup_cloudflare_named_tunnel.ps1`
-  - `start_cloudflare_named_tunnel.ps1`
-  - `CLOUDFLARE_NAMED_TUNNEL.md`
+- `node --check backend/app/static/app.js`
+- `pytest tests/test_p0_hardening.py -q -p no:cacheprovider`
+- `/api/health`
+- `/api/debug/data_state`
+- `/api/rankings/latest`
+- `/api/stocks/{code_or_name}`
 
-## 驗收重點
+## 注意事項
 
-- 首頁不顯示六張功能卡。
-- 個股查詢頁不預設 3035。
-- UI 預設隱藏資料品質 debug chip。
-- 健康檢查可看目前是否為即時盤中資料。
-- 題材與個股金額仍以推估資金流呈現。
+Render 免費方案可能冷啟動。若首頁初次打開無資料，系統會自動補掃，但仍需等待資料源回應。
