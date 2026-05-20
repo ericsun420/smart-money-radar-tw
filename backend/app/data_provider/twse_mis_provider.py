@@ -128,11 +128,13 @@ async def fetch_mis_quotes_for_snapshots(
     now: datetime | None = None,
     timeout: float = 8,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
+    max_concurrency: int = 8,
 ) -> tuple[list[StockSnapshot], list[str]]:
     now = ensure_taipei(now or taipei_now())
     by_code = {snapshot.code: snapshot for snapshot in base_snapshots}
     merged: dict[str, StockSnapshot] = {}
     errors: list[str] = []
+    semaphore = asyncio.Semaphore(max(1, max_concurrency))
 
     async def fetch_chunk(client: httpx.AsyncClient, chunk: list[StockSnapshot]) -> tuple[list[StockSnapshot], list[str]]:
         ex_ch = "|".join(
@@ -140,11 +142,12 @@ async def fetch_mis_quotes_for_snapshots(
             for snapshot in chunk
         )
         try:
-            response = await client.get(
-                TWSE_MIS_URL,
-                params={"ex_ch": ex_ch, "json": 1, "delay": 0},
-                headers=MIS_HEADERS,
-            )
+            async with semaphore:
+                response = await client.get(
+                    TWSE_MIS_URL,
+                    params={"ex_ch": ex_ch, "json": 1, "delay": 0},
+                    headers=MIS_HEADERS,
+                )
             response.raise_for_status()
             payload = response.json()
         except (json.JSONDecodeError, httpx.HTTPError) as exc:
@@ -174,16 +177,10 @@ async def fetch_mis_quotes_for_snapshots(
         return snapshots, []
 
     async with httpx.AsyncClient(timeout=timeout) as client:
-        for chunk in _chunked(base_snapshots, chunk_size):
-            ex_ch = "|".join(
-                f"{'otc' if snapshot.market == 'OTC' else 'tse'}_{snapshot.code}.tw"
-                for snapshot in chunk
-            )
-            chunk_snapshots, chunk_errors = await fetch_chunk(client, chunk)
+        tasks = [fetch_chunk(client, chunk) for chunk in _chunked(base_snapshots, chunk_size)]
+        for chunk_snapshots, chunk_errors in await asyncio.gather(*tasks):
             errors.extend(chunk_errors)
             for normalized in chunk_snapshots:
                 merged[normalized.code] = normalized
-
-            await asyncio.sleep(0.05)
 
     return list(merged.values()), errors

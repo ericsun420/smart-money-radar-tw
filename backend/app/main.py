@@ -22,6 +22,8 @@ from app.api.routes_stock import router as stock_router
 from app.api.routes_topics import router as topics_router
 from app.notifier.discord import validate_webhook_url
 from app.scheduler import configure_discord_queue_job, configure_scan_job, scheduler
+from app.data_provider.seed_data import build_seed_snapshots
+from app.data_provider.theme_mapping import apply_theme_mappings
 from app.storage.repository import repo
 
 
@@ -33,6 +35,16 @@ async def run_startup_scan() -> None:
         await asyncio.to_thread(repo.scan)
     except Exception as exc:
         print(f"startup scan failed: {type(exc).__name__}: {exc}", flush=True)
+
+
+def load_seed_data_for_test_client() -> None:
+    previous, current = build_seed_snapshots()
+    previous = apply_theme_mappings(previous)
+    current = apply_theme_mappings(current)
+    repo.use_provider = False
+    repo.previous_snapshots = {snapshot.code: snapshot for snapshot in previous}
+    repo.snapshots = {snapshot.code: snapshot for snapshot in current}
+    repo.scan()
 
 
 @asynccontextmanager
@@ -49,7 +61,9 @@ async def lifespan(app: FastAPI):
     configure_discord_queue_job(flush_due_discord_queue)
     if not scheduler.running:
         scheduler.start()
-    if repo.last_scan_at is None:
+    if os.getenv("PYTEST_CURRENT_TEST") and repo.last_scan_at is None and not repo.stock_flows:
+        load_seed_data_for_test_client()
+    elif repo.last_scan_at is None:
         asyncio.create_task(run_startup_scan())
     try:
         yield
