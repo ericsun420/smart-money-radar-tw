@@ -41,6 +41,14 @@ def _change_pct(price: float, previous_close: float) -> float:
     return (price - previous_close) / previous_close * 100
 
 
+def _first_book_price(value: object) -> float:
+    text = str(value or "").strip()
+    if not text or text == "-":
+        return 0.0
+    first = text.split("_", 1)[0]
+    return parse_number(first)
+
+
 def normalize_mis_item(item: dict, base_snapshot: StockSnapshot, *, now: datetime) -> StockSnapshot | None:
     """Overlay a TWSE MIS quote onto an official daily snapshot.
 
@@ -55,9 +63,15 @@ def normalize_mis_item(item: dict, base_snapshot: StockSnapshot, *, now: datetim
     if code != base_snapshot.code:
         return None
 
-    price = parse_number(item.get("z"))
+    last_trade_price = parse_number(item.get("z"))
+    best_ask = _first_book_price(item.get("a"))
+    best_bid = _first_book_price(item.get("b"))
+    price = last_trade_price
     if price <= 0:
-        price = parse_number(item.get("y")) or base_snapshot.price
+        # Some active TWSE MIS rows publish the live book while z/tv are "-".
+        # In that case the user-visible quote should follow the live best quote,
+        # not the stale official daily/base row.
+        price = best_bid or best_ask or base_snapshot.price
     if price <= 0:
         return None
 

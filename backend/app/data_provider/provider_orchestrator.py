@@ -220,7 +220,7 @@ def seed_provider_result() -> ProviderResult:
 
 def fetch_market_snapshots(*, allow_seed_fallback: bool = False, min_official_count: int = 1500) -> ProviderResult:
     now = taipei_now()
-    prefer_mcp = os.getenv("SMART_MONEY_PREFER_MCP_PROXY", "1").strip().lower() not in {"0", "false", "no"}
+    prefer_mcp = os.getenv("SMART_MONEY_PREFER_MCP_PROXY", "0").strip().lower() not in {"0", "false", "no"}
     mcp_enabled = os.getenv("SMART_MONEY_ENABLE_MCP_PROXY", "1").strip().lower() not in {"0", "false", "no"}
 
     official_first = _prefer_official_close(now)

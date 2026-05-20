@@ -292,6 +292,46 @@ def test_twse_mis_quote_normalizes_to_official_intraday_proxy():
     assert snapshot.trade_value_yi == round(102.5 * 12_345_000 / 100_000_000, 2)
 
 
+def test_twse_mis_missing_last_trade_uses_live_best_quote_not_daily_base():
+    now = datetime(2026, 5, 20, 9, 54, tzinfo=TAIPEI_TZ)
+    base = official_snapshot("2327", 497, 445.32, now, industry="ElectronicParts").model_copy(
+        update={
+            "name": "國巨*",
+            "previous_close": 501,
+            "open": 501,
+            "high": 516,
+            "low": 485.5,
+            "change_pct": -0.7984,
+            "data_quality_bucket": "official_partial",
+            "provider_type": "official_partial",
+            "formal_grade": False,
+        }
+    )
+    snapshot = normalize_mis_item(
+        {
+            "c": "2327",
+            "n": "國巨*",
+            "ex": "tse",
+            "z": "-",
+            "a": "537.0000_538.0000_539.0000_540.0000_541.0000_",
+            "b": "536.0000_535.0000_534.0000_533.0000_532.0000_",
+            "o": "514.0",
+            "h": "545.0",
+            "l": "503.0",
+            "y": "497.0",
+            "v": "46734",
+            "d": "20260520",
+            "t": "09:54:20",
+        },
+        base,
+        now=now,
+    )
+    assert snapshot is not None
+    assert snapshot.price == 536
+    assert snapshot.previous_close == 497
+    assert round(snapshot.change_pct, 2) == 7.85
+
+
 def test_official_intraday_can_be_formal_during_regular_session():
     now = datetime(2026, 4, 30, 10, 5, tzinfo=TAIPEI_TZ)
     snap = official_snapshot("2330", 100, 10, now).model_copy(
@@ -576,6 +616,33 @@ def test_after_close_prefers_official_daily_close_over_mcp_proxy(monkeypatch):
     assert result.snapshots[0].code == "2330"
     assert result.snapshots[0].price == 2240
     assert "official_close_preferred_after_market_close" in result.errors
+
+
+def test_regular_session_prefers_official_mis_pipeline_over_mcp_proxy_by_default(monkeypatch):
+    now = datetime(2026, 5, 20, 9, 54, tzinfo=TAIPEI_TZ)
+    official = ProviderResult(
+        snapshots=[official_snapshot("2327", 497, 445.32, now)],
+        source_used="twse_mis_realtime",
+        source_status="official_intraday",
+        source_ts=now,
+        market_data_time=now,
+        twse_count=1,
+        tpex_count=0,
+    )
+
+    def fail_mcp():
+        raise AssertionError("MCP proxy should not override official/MIS pipeline by default")
+
+    monkeypatch.delenv("SMART_MONEY_PREFER_MCP_PROXY", raising=False)
+    monkeypatch.setattr(provider_orchestrator, "taipei_now", lambda: now)
+    monkeypatch.setattr(provider_orchestrator, "fetch_official_snapshots", lambda: official)
+    monkeypatch.setattr(provider_orchestrator, "fetch_mcp_proxy_snapshots", fail_mcp)
+
+    result = provider_orchestrator.fetch_market_snapshots(min_official_count=1)
+
+    assert result.source_used == "twse_mis_realtime"
+    assert result.snapshots[0].code == "2327"
+    assert result.snapshots[0].price == 497
 
 
 def test_official_close_snapshots_use_close_time_not_fetch_time():
