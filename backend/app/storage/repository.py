@@ -105,9 +105,17 @@ class InMemoryRepository:
         if not self._scan_lock.acquire(blocking=False):
             return False
         self.scan_in_progress = True
-        summary = self.refresh_snapshots_from_provider()
-        started = summary.scan_started_at
+        started = taipei_now()
+        summary = ScanDebugSummary(
+            scan_started_at=started,
+            market_date=market_date(started),
+            source_used="scan_starting",
+            source_status="pending",
+            source_ts=started,
+        )
         try:
+            summary = self.refresh_snapshots_from_provider()
+            started = summary.scan_started_at
             qualified_snapshots = {
                 code: apply_snapshot_quality(snapshot, now=started, stale_seconds=self.settings.stale_seconds)
                 for code, snapshot in self.snapshots.items()
@@ -180,9 +188,11 @@ class InMemoryRepository:
             return True
         except Exception as exc:
             summary.error_count += 1
-            summary.errors.append(type(exc).__name__)
+            summary.source_used = summary.source_used if summary.source_used != "scan_starting" else "provider_exception"
+            summary.source_status = "failed"
+            summary.errors.append(f"{type(exc).__name__}: {exc}")
             self.last_scan_error = f"{type(exc).__name__}: {exc}"
-            raise
+            return False
         finally:
             summary.scan_finished_at = taipei_now()
             self.last_debug_summary = summary

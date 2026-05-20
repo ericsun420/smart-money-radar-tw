@@ -77,6 +77,41 @@ def test_display_and_delta_flow_are_separate():
     assert flow.delta_signed_flow_yi == 10
 
 
+def test_scan_releases_lock_when_provider_fails(monkeypatch):
+    repo = InMemoryRepository(store=make_test_db("scan-failure"), use_provider=True)
+
+    def fail_provider():
+        raise RuntimeError("provider boom")
+
+    monkeypatch.setattr(repo, "refresh_snapshots_from_provider", fail_provider)
+    assert repo.scan() is False
+    assert repo.scan_in_progress is False
+    assert repo.last_scan_error == "RuntimeError: provider boom"
+    assert repo.last_debug_summary is not None
+    assert repo.last_debug_summary.source_status == "failed"
+
+    now = datetime(2026, 5, 20, 10, 10, tzinfo=TAIPEI_TZ)
+    snap = official_snapshot("2330", 100, 10, now)
+
+    def ok_provider():
+        repo.previous_snapshots = {}
+        repo.snapshots = {"2330": snap}
+        return ScanDebugSummary(
+            scan_started_at=now,
+            market_date="2026-05-20",
+            source_used="test_provider",
+            source_status="official_full",
+            source_ts=now,
+            market_data_time=now,
+            result_count=1,
+        )
+
+    monkeypatch.setattr(repo, "refresh_snapshots_from_provider", ok_provider)
+    assert repo.scan() is True
+    assert repo.scan_in_progress is False
+    assert repo.last_scan_error is None
+
+
 def test_stock_signal_uses_quote_time_as_source_ts():
     scan_time = datetime(2026, 5, 7, 20, 31, tzinfo=TAIPEI_TZ)
     quote_time = datetime(2026, 5, 7, 13, 33, tzinfo=TAIPEI_TZ)
