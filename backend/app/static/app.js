@@ -166,22 +166,27 @@ function stockSummaryCard(detail) {
   const topicList = cleanTopics(detail.topics || [stock.primary_theme, stock.official_industry, ...(stock.themes || [])]);
   const direction = flow.direction || stock.flow_direction || "NEUTRAL";
   const amount = Math.abs(currentFlowAmount(flow));
-  const quoteTime = stock.market_data_time || stock.source_ts || stock.timestamp || flow.quote_time || flow.timestamp;
+  const hasIntradayQuote = Boolean(stock.is_intraday || stock.market_data_time || flow.quote_time);
+  const quoteTime = stock.market_data_time || flow.quote_time;
   const industry = displayIndustryName(stock.official_industry || stock.industry);
   const primaryTheme = displayTopicName(stock.primary_theme || topicList[0], topicList.length ? topicList[0] : "題材資料待補");
+  const priceText = hasIntradayQuote ? (stock.price ?? "-") : "行情未更新";
+  const changeText = hasIntradayQuote ? pct(stock.change_pct) : "-";
+  const turnoverText = hasIntradayQuote ? yi(stock.trade_value_yi, false) : "-";
+  const flowText = hasIntradayQuote ? `${directionText(direction)}<b>${yi(amount, false)}</b>` : "行情未更新";
   return `<section class="stock-card stock-profile">
     <div class="stock-profile-head">
       <div>
         <h2>${h(stock.code || "")} ${h(stock.name || "")}</h2>
         <p>${h(industry)}｜${h(primaryTheme)}</p>
       </div>
-      <div class="${directionClass(direction)} stock-profile-flow">${directionText(direction)}<b>${yi(amount, false)}</b></div>
+      <div class="${hasIntradayQuote ? directionClass(direction) : ""} stock-profile-flow">${flowText}</div>
     </div>
     <div class="metric-grid compact stock-profile-grid">
-      <span>最新價<b>${stock.price ?? "-"}</b></span>
-      <span>漲跌幅<b class="${Number(stock.change_pct || 0) >= 0 ? "red" : "green"}">${pct(stock.change_pct)}</b></span>
-      <span>成交金額<b>${yi(stock.trade_value_yi, false)}</b></span>
-      <span>資料時間<b>${h(quoteDateTime(quoteTime))}</b></span>
+      <span>最新價<b>${h(priceText)}</b></span>
+      <span>漲跌幅<b class="${hasIntradayQuote && Number(stock.change_pct || 0) >= 0 ? "red" : "green"}">${h(changeText)}</b></span>
+      <span>成交金額<b>${h(turnoverText)}</b></span>
+      <span>資料時間<b>${h(quoteTime ? quoteDateTime(quoteTime) : "行情未更新")}</b></span>
       <span>官方產業<b>${h(industry)}</b></span>
       <span>異動次數<b>${Number(detail.signal_count || 0)} 次</b></span>
     </div>

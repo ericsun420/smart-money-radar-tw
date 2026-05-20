@@ -144,8 +144,12 @@ async def fetch_official_snapshots_async() -> ProviderResult:
             if realtime_ratio >= 0.8 and not realtime_is_fresh:
                 errors.append(f"mis_realtime_not_fresh:latency={realtime_latency}s")
 
-    market_data_time = max((s.market_data_time or s.source_ts or s.timestamp for s in official_snapshots), default=None)
-    latency = max(int((now - market_data_time).total_seconds()), 0) if market_data_time else None
+    if use_intraday_overlay and source_used == "twse_tpex_official":
+        market_data_time = None
+        latency = None
+    else:
+        market_data_time = max((s.market_data_time or s.source_ts or s.timestamp for s in official_snapshots), default=None)
+        latency = max(int((now - market_data_time).total_seconds()), 0) if market_data_time else None
     return ProviderResult(
         snapshots=official_snapshots,
         source_used=source_used,

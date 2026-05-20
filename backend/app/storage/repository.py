@@ -417,6 +417,10 @@ class InMemoryRepository:
             blocked_reason = snapshot.blocked_reason or flow.blocked_reason or ""
             if snapshot.data_quality_bucket == "stale" or blocked_reason.startswith(("stale_timestamp", "market_date_mismatch")):
                 continue
+            if self.use_provider and is_regular_tw_session(now) and not snapshot.is_intraday:
+                continue
+            if self.use_provider and is_regular_tw_session(now) and not snapshot.market_data_time:
+                continue
             if is_regular_tw_session(now) and snapshot.data_latency_seconds is not None and snapshot.data_latency_seconds > self.settings.stale_seconds:
                 continue
             eligible.append(flow)
