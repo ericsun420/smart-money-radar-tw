@@ -593,7 +593,7 @@ class InMemoryRepository:
             session_label = "休市"
         elif now.time() < datetime.strptime("09:00", "%H:%M").time():
             session_status = "preopen"
-            session_label = "盤前準備"
+            session_label = "盤前"
         elif is_regular_tw_session(now):
             session_status = "regular"
             session_label = "盤中監控"
@@ -680,9 +680,9 @@ class InMemoryRepository:
         )
 
     def stock_detail(self, code: str) -> dict | None:
-        snapshot = self.snapshots.get(code)
+        query = code.strip().lower()
+        snapshot = self.snapshots.get(code.strip())
         if not snapshot:
-            query = code.strip().lower()
             aliases = {
                 "智原": "3035",
                 "鴻海": "2317",
@@ -781,7 +781,7 @@ class InMemoryRepository:
         elif top5_coverage_ratio < 0.4:
             topic_payload["top5_coverage_label"] = "此題材由多檔分散貢獻"
         else:
-            topic_payload["top5_coverage_label"] = "前五檔與其他個股共同帶動"
+            topic_payload["top5_coverage_label"] = "題材由多檔共同帶動"
         return {
             "topic_flow": topic_payload,
             "top_impacts": topic.top_impacts,
