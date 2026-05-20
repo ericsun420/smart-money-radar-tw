@@ -12,7 +12,9 @@ from app.time_utils import TAIPEI_TZ, ensure_taipei, market_date, taipei_now
 
 
 TWSE_MIS_URL = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
-DEFAULT_CHUNK_SIZE = 40
+DEFAULT_CHUNK_SIZE = 20
+MIN_SPLIT_CHUNK_SIZE = 5
+MAX_SPLIT_DEPTH = 2
 MIS_HEADERS = {
     "User-Agent": "Mozilla/5.0 SmartMoneyRadar/1.0",
     "Accept": "application/json,text/plain,*/*",
@@ -126,9 +128,9 @@ async def fetch_mis_quotes_for_snapshots(
     base_snapshots: list[StockSnapshot],
     *,
     now: datetime | None = None,
-    timeout: float = 8,
+    timeout: float = 5,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
-    max_concurrency: int = 8,
+    max_concurrency: int = 4,
 ) -> tuple[list[StockSnapshot], list[str]]:
     now = ensure_taipei(now or taipei_now())
     by_code = {snapshot.code: snapshot for snapshot in base_snapshots}
@@ -136,7 +138,12 @@ async def fetch_mis_quotes_for_snapshots(
     errors: list[str] = []
     semaphore = asyncio.Semaphore(max(1, max_concurrency))
 
-    async def fetch_chunk(client: httpx.AsyncClient, chunk: list[StockSnapshot]) -> tuple[list[StockSnapshot], list[str]]:
+    async def fetch_chunk(
+        client: httpx.AsyncClient,
+        chunk: list[StockSnapshot],
+        *,
+        split_depth: int = 0,
+    ) -> tuple[list[StockSnapshot], list[str]]:
         ex_ch = "|".join(
             f"{'otc' if snapshot.market == 'OTC' else 'tse'}_{snapshot.code}.tw"
             for snapshot in chunk
@@ -150,18 +157,27 @@ async def fetch_mis_quotes_for_snapshots(
                 )
             response.raise_for_status()
             payload = response.json()
-        except (json.JSONDecodeError, httpx.HTTPError) as exc:
-            if len(chunk) > 1:
+        except (json.JSONDecodeError, httpx.RemoteProtocolError) as exc:
+            if len(chunk) > MIN_SPLIT_CHUNK_SIZE and split_depth < MAX_SPLIT_DEPTH:
                 midpoint = len(chunk) // 2
-                left, left_errors = await fetch_chunk(client, chunk[:midpoint])
-                right, right_errors = await fetch_chunk(client, chunk[midpoint:])
+                (left, left_errors), (right, right_errors) = await asyncio.gather(
+                    fetch_chunk(client, chunk[:midpoint], split_depth=split_depth + 1),
+                    fetch_chunk(client, chunk[midpoint:], split_depth=split_depth + 1),
+                )
                 return [*left, *right], [*left_errors, *right_errors, f"mis_chunk_split:{type(exc).__name__}:{len(chunk)}"]
             return [], [f"mis_chunk:{type(exc).__name__}:{chunk[0].code}"]
+        except httpx.HTTPError as exc:
+            # Network timeouts on Render should fail the chunk quickly. Splitting
+            # every timed-out chunk down to single symbols can make startup scan
+            # take minutes and leave the app empty.
+            return [], [f"mis_chunk:{type(exc).__name__}:{len(chunk)}"]
         except Exception as exc:
-            if len(chunk) > 1:
+            if len(chunk) > MIN_SPLIT_CHUNK_SIZE and split_depth < MAX_SPLIT_DEPTH:
                 midpoint = len(chunk) // 2
-                left, left_errors = await fetch_chunk(client, chunk[:midpoint])
-                right, right_errors = await fetch_chunk(client, chunk[midpoint:])
+                (left, left_errors), (right, right_errors) = await asyncio.gather(
+                    fetch_chunk(client, chunk[:midpoint], split_depth=split_depth + 1),
+                    fetch_chunk(client, chunk[midpoint:], split_depth=split_depth + 1),
+                )
                 return [*left, *right], [*left_errors, *right_errors, f"mis_chunk_split:{type(exc).__name__}:{len(chunk)}"]
             return [], [f"mis_chunk:{type(exc).__name__}:{chunk[0].code}"]
 
