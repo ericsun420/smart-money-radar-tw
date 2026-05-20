@@ -645,6 +645,62 @@ def test_regular_session_prefers_official_mis_pipeline_over_mcp_proxy_by_default
     assert result.snapshots[0].price == 497
 
 
+def test_partial_mis_coverage_overlays_realtime_quotes_instead_of_discarding_them(monkeypatch):
+    now = datetime(2026, 5, 20, 10, 2, tzinfo=TAIPEI_TZ)
+    daily_2327 = official_snapshot("2327", 497, 445.32, now, industry="ElectronicParts").model_copy(
+        update={"source_ts": now, "market_date": "2026-05-20"}
+    )
+    daily_otc = official_snapshot("8299", 2670, 41.33, now, industry="Semi").model_copy(
+        update={"market": "OTC", "source_ts": now, "market_date": "2026-05-20"}
+    )
+    realtime_2327 = daily_2327.model_copy(
+        update={
+            "price": 536,
+            "previous_close": 497,
+            "change_pct": 7.85,
+            "source_ts": now,
+            "market_data_time": now,
+            "data_latency_seconds": 0,
+            "data_quality_bucket": "official_intraday",
+            "provider_type": "official_intraday",
+            "source_status": "official_intraday",
+            "is_realtime": True,
+            "is_intraday": True,
+            "realtime_provider": "twse_mis",
+        }
+    )
+
+    async def fake_twse_daily_all():
+        return []
+
+    async def fake_tpex_daily_all():
+        return []
+
+    def fake_normalize_twse(row, *, now):
+        return None
+
+    def fake_normalize_tpex(row, *, now):
+        return None
+
+    async def fake_fetch_mis_quotes(base, *, now=None, timeout=8, chunk_size=80):
+        return [realtime_2327], []
+
+    monkeypatch.setattr(provider_orchestrator, "taipei_now", lambda: now)
+    monkeypatch.setattr(provider_orchestrator, "fetch_twse_daily_all", fake_twse_daily_all)
+    monkeypatch.setattr(provider_orchestrator, "fetch_tpex_daily_all", fake_tpex_daily_all)
+    monkeypatch.setattr(provider_orchestrator, "filter_common_stocks", lambda rows: ([daily_2327, daily_otc], 0))
+    monkeypatch.setattr(provider_orchestrator, "fetch_mis_quotes_for_snapshots", fake_fetch_mis_quotes)
+
+    result = provider_orchestrator.fetch_official_snapshots()
+    by_code = {snapshot.code: snapshot for snapshot in result.snapshots}
+
+    assert result.source_used == "twse_mis_realtime_overlay"
+    assert result.source_status == "official_partial"
+    assert by_code["2327"].price == 536
+    assert by_code["2327"].realtime_provider == "twse_mis"
+    assert by_code["8299"].price == 2670
+
+
 def test_official_close_snapshots_use_close_time_not_fetch_time():
     now = datetime(2026, 5, 19, 18, 10, tzinfo=TAIPEI_TZ)
     snapshot = official_snapshot("2330", 2240, 736.55, now)

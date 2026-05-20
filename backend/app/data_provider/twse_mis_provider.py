@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime
 
 import httpx
@@ -11,7 +12,7 @@ from app.time_utils import TAIPEI_TZ, ensure_taipei, market_date, taipei_now
 
 
 TWSE_MIS_URL = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
-DEFAULT_CHUNK_SIZE = 80
+DEFAULT_CHUNK_SIZE = 40
 MIS_HEADERS = {
     "User-Agent": "Mozilla/5.0 SmartMoneyRadar/1.0",
     "Accept": "application/json,text/plain,*/*",
@@ -133,32 +134,55 @@ async def fetch_mis_quotes_for_snapshots(
     merged: dict[str, StockSnapshot] = {}
     errors: list[str] = []
 
+    async def fetch_chunk(client: httpx.AsyncClient, chunk: list[StockSnapshot]) -> tuple[list[StockSnapshot], list[str]]:
+        ex_ch = "|".join(
+            f"{'otc' if snapshot.market == 'OTC' else 'tse'}_{snapshot.code}.tw"
+            for snapshot in chunk
+        )
+        try:
+            response = await client.get(
+                TWSE_MIS_URL,
+                params={"ex_ch": ex_ch, "json": 1, "delay": 0},
+                headers=MIS_HEADERS,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except (json.JSONDecodeError, httpx.HTTPError) as exc:
+            if len(chunk) > 1:
+                midpoint = len(chunk) // 2
+                left, left_errors = await fetch_chunk(client, chunk[:midpoint])
+                right, right_errors = await fetch_chunk(client, chunk[midpoint:])
+                return [*left, *right], [*left_errors, *right_errors, f"mis_chunk_split:{type(exc).__name__}:{len(chunk)}"]
+            return [], [f"mis_chunk:{type(exc).__name__}:{chunk[0].code}"]
+        except Exception as exc:
+            if len(chunk) > 1:
+                midpoint = len(chunk) // 2
+                left, left_errors = await fetch_chunk(client, chunk[:midpoint])
+                right, right_errors = await fetch_chunk(client, chunk[midpoint:])
+                return [*left, *right], [*left_errors, *right_errors, f"mis_chunk_split:{type(exc).__name__}:{len(chunk)}"]
+            return [], [f"mis_chunk:{type(exc).__name__}:{chunk[0].code}"]
+
+        snapshots: list[StockSnapshot] = []
+        for item in payload.get("msgArray", []) if isinstance(payload, dict) else []:
+            code = str(item.get("c") or "").strip()
+            base = by_code.get(code)
+            if not base:
+                continue
+            normalized = normalize_mis_item(item, base, now=now)
+            if normalized:
+                snapshots.append(normalized)
+        return snapshots, []
+
     async with httpx.AsyncClient(timeout=timeout) as client:
         for chunk in _chunked(base_snapshots, chunk_size):
             ex_ch = "|".join(
                 f"{'otc' if snapshot.market == 'OTC' else 'tse'}_{snapshot.code}.tw"
                 for snapshot in chunk
             )
-            try:
-                response = await client.get(
-                    TWSE_MIS_URL,
-                    params={"ex_ch": ex_ch, "json": 1, "delay": 0},
-                    headers=MIS_HEADERS,
-                )
-                response.raise_for_status()
-                payload = response.json()
-            except Exception as exc:
-                errors.append(f"mis_chunk:{type(exc).__name__}")
-                continue
-
-            for item in payload.get("msgArray", []) if isinstance(payload, dict) else []:
-                code = str(item.get("c") or "").strip()
-                base = by_code.get(code)
-                if not base:
-                    continue
-                normalized = normalize_mis_item(item, base, now=now)
-                if normalized:
-                    merged[code] = normalized
+            chunk_snapshots, chunk_errors = await fetch_chunk(client, chunk)
+            errors.extend(chunk_errors)
+            for normalized in chunk_snapshots:
+                merged[normalized.code] = normalized
 
             await asyncio.sleep(0.05)
 

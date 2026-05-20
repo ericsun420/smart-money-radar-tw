@@ -54,6 +54,14 @@ def _stamp_official_close_snapshots(snapshots: list[StockSnapshot], now) -> list
     ]
 
 
+def _overlay_realtime_snapshots(
+    daily_snapshots: list[StockSnapshot],
+    realtime_snapshots: list[StockSnapshot],
+) -> list[StockSnapshot]:
+    realtime_by_code = {snapshot.code: snapshot for snapshot in realtime_snapshots}
+    return [realtime_by_code.get(snapshot.code, snapshot) for snapshot in daily_snapshots]
+
+
 async def fetch_official_snapshots_async() -> ProviderResult:
     now = taipei_now()
     errors: list[str] = []
@@ -97,11 +105,13 @@ async def fetch_official_snapshots_async() -> ProviderResult:
         and realtime_is_same_trade_date
         and is_regular_tw_session(now)
     )
-    if realtime_snapshots and realtime_ratio >= 0.8 and realtime_is_fresh:
-        official_snapshots = apply_theme_mappings(realtime_snapshots)
-        source_status = "official_intraday"
-        source_used = "twse_mis_realtime"
-    elif realtime_snapshots and realtime_ratio >= 0.8 and realtime_is_same_trade_date:
+    if realtime_snapshots and realtime_is_fresh:
+        official_snapshots = apply_theme_mappings(_overlay_realtime_snapshots(daily_snapshots, realtime_snapshots))
+        source_status = "official_partial" if realtime_ratio < 0.8 else "official_intraday"
+        source_used = "twse_mis_realtime_overlay" if realtime_ratio < 0.8 else "twse_mis_realtime"
+        if realtime_ratio < 0.8:
+            errors.append(f"mis_realtime_partial_overlay:{len(realtime_snapshots)}/{len(daily_snapshots)}")
+    elif realtime_snapshots and realtime_is_same_trade_date:
         official_snapshots = apply_theme_mappings(
             [
                 snapshot.model_copy(
@@ -116,11 +126,11 @@ async def fetch_official_snapshots_async() -> ProviderResult:
                         "blocked_reason": "twse_mis_today_quote_not_realtime",
                     }
                 )
-                for snapshot in realtime_snapshots
+                for snapshot in _overlay_realtime_snapshots(daily_snapshots, realtime_snapshots)
             ]
         )
         source_status = "official_partial"
-        source_used = "twse_mis_today_quote"
+        source_used = "twse_mis_today_quote_overlay"
         errors.append(f"mis_today_quote_not_realtime:latency={realtime_latency}s")
     else:
         official_snapshots = daily_snapshots
