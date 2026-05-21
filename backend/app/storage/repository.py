@@ -358,6 +358,47 @@ class InMemoryRepository:
             for flow in ranked
         ]
 
+    def _topic_outflow_rank(self, topics: list[TopicFlow], *, limit: int = 50) -> list[TopicFlow]:
+        """Rank topic outflow pressure without repeating the same stock cluster.
+
+        A stock can belong to several nested labels, for example industry,
+        memory, and HBM. If one outflow stock drives all three labels, showing
+        all of them with the exact same outflow amount makes the radar look like
+        duplicated data. Keep the most specific/high-pressure topic for each
+        identical outflow contributor set.
+        """
+
+        candidates = [topic for topic in topics if topic.outflow_yi > 0]
+        best_by_signature: dict[tuple[str, ...], TopicFlow] = {}
+        for topic in candidates:
+            signature = tuple(
+                sorted(
+                    impact.code
+                    for impact in topic.top_impacts
+                    if impact.direction == "OUTFLOW" and impact.display_signed_flow_yi < 0
+                )
+            )
+            if not signature:
+                signature = (topic.topic_name,)
+            current = best_by_signature.get(signature)
+            if current is None:
+                best_by_signature[signature] = topic
+                continue
+            topic_pressure = topic.outflow_yi / topic.abs_total_yi if topic.abs_total_yi else 0
+            current_pressure = current.outflow_yi / current.abs_total_yi if current.abs_total_yi else 0
+            if (topic_pressure, topic.weak_stock_count, -len(topic.topic_name)) > (
+                current_pressure,
+                current.weak_stock_count,
+                -len(current.topic_name),
+            ):
+                best_by_signature[signature] = topic
+
+        return sorted(
+            best_by_signature.values(),
+            key=lambda topic: (topic.outflow_yi, topic.outflow_yi / topic.abs_total_yi if topic.abs_total_yi else 0),
+            reverse=True,
+        )[:limit]
+
     def rankings(self, *, official_full_only: bool = False) -> dict:
         flows = self._main_ranking_flows(list(self.stock_flows.values()))
         topics, _ = aggregate_topics(
@@ -374,7 +415,7 @@ class InMemoryRepository:
             flows = [f for f in flows if f.formal_grade and f.data_quality_bucket in {"official_full", "official_intraday"}]
             signals = [s for s in signals if s.formal_grade and s.data_quality_bucket in {"official_full", "official_intraday"}]
         topic_inflow_rank = sorted([t for t in topics if t.inflow_yi > 0], key=lambda x: x.inflow_yi, reverse=True)[:50]
-        topic_outflow_rank = sorted([t for t in topics if t.outflow_yi > 0], key=lambda x: x.outflow_yi, reverse=True)[:50]
+        topic_outflow_rank = self._topic_outflow_rank(topics)
         return {
             "updated_at": self.last_scan_at,
             "scan_id": self.current_scan_id(),
