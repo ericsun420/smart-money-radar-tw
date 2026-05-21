@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, time
 from threading import Lock
 
 from app.data_provider.provider_orchestrator import fetch_market_snapshots
@@ -406,6 +406,7 @@ class InMemoryRepository:
         now = taipei_now()
         reference_time = self.last_scan_at or now
         today = market_date(reference_time)
+        needs_market_quote_time = self.use_provider and now.weekday() < 5 and now.time() < time(13, 35)
         eligible: list[StockFlow] = []
         for flow in flows:
             snapshot = self.snapshots.get(flow.code)
@@ -416,6 +417,8 @@ class InMemoryRepository:
                 continue
             blocked_reason = snapshot.blocked_reason or flow.blocked_reason or ""
             if snapshot.data_quality_bucket == "stale" or blocked_reason.startswith(("stale_timestamp", "market_date_mismatch")):
+                continue
+            if needs_market_quote_time and not snapshot.market_data_time:
                 continue
             if self.use_provider and is_regular_tw_session(now) and not snapshot.is_intraday:
                 continue
