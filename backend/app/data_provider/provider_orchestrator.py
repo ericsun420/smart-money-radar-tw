@@ -17,6 +17,7 @@ from app.time_utils import is_regular_tw_session, market_date, taipei_now
 
 
 REALTIME_STALE_SECONDS = 600
+MIS_FETCH_TIMEOUT_SECONDS = 25
 
 
 def _prefer_official_close(now) -> bool:
@@ -96,8 +97,14 @@ async def fetch_official_snapshots_async() -> ProviderResult:
     if daily_snapshots and not use_intraday_overlay:
         daily_snapshots = _stamp_official_close_snapshots(daily_snapshots, now)
     if daily_snapshots and use_intraday_overlay:
-        realtime_snapshots, realtime_errors = await fetch_mis_quotes_for_snapshots(daily_snapshots, now=now)
-        errors.extend(realtime_errors)
+        try:
+            realtime_snapshots, realtime_errors = await asyncio.wait_for(
+                fetch_mis_quotes_for_snapshots(daily_snapshots, now=now),
+                timeout=MIS_FETCH_TIMEOUT_SECONDS,
+            )
+            errors.extend(realtime_errors)
+        except TimeoutError:
+            errors.append(f"mis_realtime_timeout:{MIS_FETCH_TIMEOUT_SECONDS}s")
 
     realtime_ratio = (len(realtime_snapshots) / len(daily_snapshots)) if daily_snapshots else 0
     realtime_market_time = max((s.market_data_time or s.source_ts or s.timestamp for s in realtime_snapshots), default=None)
