@@ -228,7 +228,7 @@ function renderRecentSearches() {
   });
 }
 
-function topicRankList(title, rows, type, limit = 5, fallbackStocks = []) {
+function topicRankList(title, rows, type, limit = 5) {
   const visibleRows = (rows || []).slice(0, limit);
   const topicRows = visibleRows.map((row, index) => `
     <button class="rank-row" data-topic="${h(row.topic_name)}" data-topic-side="${type}">
@@ -237,16 +237,7 @@ function topicRankList(title, rows, type, limit = 5, fallbackStocks = []) {
       <span class="${type === "in" ? "red" : "green"}">${type === "out" ? yi(-Math.abs(Number(row.outflow_yi || row.net_yi || 0))) : yi(row.net_yi)}</span>
       <span class="tiny">⚡ ${Number(row.radar_score || 0)}</span>
     </button>`);
-  const fillRows = type === "out" && topicRows.length < limit
-    ? (fallbackStocks || []).slice(0, limit - topicRows.length).map((row, offset) => `
-      <button class="rank-row" data-stock="${h(row.code)}">
-        <span>${topicRows.length + offset + 1}</span>
-        <span>${h(row.code)} ${h(row.name)}<small>個股流出</small></span>
-        <span class="green">${yi(-Math.abs(Number(row.stock_flow_proxy_amount || row.display_signed_flow_yi || 0)))}</span>
-        <span class="tiny">${pct(row.change_pct)}</span>
-      </button>`)
-    : [];
-  const body = [...topicRows, ...fillRows].join("") || `<div class="rank-empty">暫無符合條件的題材</div>`;
+  const body = topicRows.join("") || `<div class="rank-empty">暫無符合條件的題材</div>`;
   return `<div><div class="rank-title">${h(title)}</div>${body}</div>`;
 }
 
@@ -408,7 +399,7 @@ async function loadDashboard() {
     $("rankings").innerHTML = `
       <section class="card"><h2>類股雷達掃描</h2><div class="split">
         ${topicRankList("資金流入 TOP5", rankings.topic_inflow_top50 || [], "in")}
-        ${topicRankList("資金流出 TOP5", rankings.topic_outflow_top50 || [], "out", 5, rankings.stock_outflow_top50 || [])}
+        ${topicRankList("資金流出 TOP5", rankings.topic_outflow_top50 || [], "out")}
       </div></section>
       <section class="card"><h2>每日資金排行榜</h2><div class="split">
         ${stockRankList("個股流入 TOP5", rankings.stock_inflow_top50 || [], "display_signed_flow_yi")}
