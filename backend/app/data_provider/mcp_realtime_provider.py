@@ -147,7 +147,7 @@ async def fetch_mcp_realtime_quotes(
     base_snapshots: list[StockSnapshot],
     *,
     now: datetime | None = None,
-    chunk_size: int = 80,
+    chunk_size: int = 120,
 ) -> ProviderResult:
     now = ensure_taipei(now or taipei_now())
     base_by_code = {snapshot.code: snapshot for snapshot in base_snapshots}

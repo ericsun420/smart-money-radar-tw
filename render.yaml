@@ -15,7 +15,7 @@ services:
       - key: SMART_MONEY_PREFER_MCP_PROXY
         value: "0"
       - key: SMART_MONEY_ENABLE_MCP_PROXY
-        value: "0"
+        value: "1"
       - key: SMART_MONEY_ACCESS_TOKEN
         sync: false
       - key: SMART_MONEY_ADMIN_TOKEN
