@@ -300,8 +300,11 @@ class InMemoryRepository:
 
     def _topic_cards(self, inflow_topics: list[TopicFlow], outflow_topics: list[TopicFlow]) -> list[TopicCardDTO]:
         merged = sorted([*inflow_topics, *outflow_topics], key=lambda topic: abs(topic.net_yi), reverse=True)
+        return self._topic_cards_in_order(merged)
+
+    def _topic_cards_in_order(self, topics: list[TopicFlow]) -> list[TopicCardDTO]:
         cards: list[TopicCardDTO] = []
-        for topic in merged:
+        for topic in topics:
             previous_net = topic.net_yi - topic.delta_net_yi
             cards.append(
                 TopicCardDTO(
@@ -333,6 +336,28 @@ class InMemoryRepository:
             )
         return cards
 
+    def _current_movement_signals(self, flows: list[StockFlow], *, limit: int = 20) -> list[SignalEvent]:
+        """Build non-push UI movement cards from the current quote batch.
+
+        These cards are for the dashboard feed only. They keep the first-version
+        radar useful in observation mode where official/formal alert emission is
+        intentionally blocked, without inventing any data or enqueueing push
+        notifications.
+        """
+
+        ranked = sorted(
+            [flow for flow in flows if flow.direction != "NEUTRAL" and (flow.quote_time or flow.timestamp)],
+            key=lambda flow: abs(flow.delta_signed_flow_yi or flow.display_signed_flow_yi),
+            reverse=True,
+        )[:limit]
+        return [
+            build_stock_signal(
+                flow,
+                blocked_reason=flow.blocked_reason or "observation_mode_dashboard_movement",
+            )
+            for flow in ranked
+        ]
+
     def rankings(self, *, official_full_only: bool = False) -> dict:
         flows = self._main_ranking_flows(list(self.stock_flows.values()))
         topics, _ = aggregate_topics(
@@ -342,10 +367,14 @@ class InMemoryRepository:
             net_near_zero_ratio=self.settings.net_near_zero_ratio,
         )
         signals = self._latest_signal_cards(self._current_scan_signals(self.signals))
+        if not signals:
+            signals = self._latest_signal_cards(self._current_movement_signals(flows))
         if official_full_only:
             topics = [t for t in topics if t.formal_grade and t.data_quality_bucket in {"official_full", "official_intraday"}]
             flows = [f for f in flows if f.formal_grade and f.data_quality_bucket in {"official_full", "official_intraday"}]
             signals = [s for s in signals if s.formal_grade and s.data_quality_bucket in {"official_full", "official_intraday"}]
+        topic_inflow_rank = sorted([t for t in topics if t.inflow_yi > 0], key=lambda x: x.inflow_yi, reverse=True)[:50]
+        topic_outflow_rank = sorted([t for t in topics if t.outflow_yi > 0], key=lambda x: x.outflow_yi, reverse=True)[:50]
         return {
             "updated_at": self.last_scan_at,
             "scan_id": self.current_scan_id(),
@@ -359,8 +388,8 @@ class InMemoryRepository:
                 "sector_strength_top": "stock absolute display flow share within official industry abs_total_yi",
             },
             "stock_signal_enabled": self.settings.stock_signal_enabled,
-            "topic_inflow_top50": self._topic_cards(sorted([t for t in topics if t.net_yi > 0], key=lambda x: x.net_yi, reverse=True)[:50], []),
-            "topic_outflow_top50": self._topic_cards([], sorted([t for t in topics if t.net_yi < 0], key=lambda x: x.net_yi)[:50]),
+            "topic_inflow_top50": self._topic_cards_in_order(topic_inflow_rank),
+            "topic_outflow_top50": self._topic_cards_in_order(topic_outflow_rank),
             "stock_inflow_top50": [self._flow_dto(f) for f in sorted([f for f in flows if f.display_signed_flow_yi > 0], key=lambda x: x.display_signed_flow_yi, reverse=True)[:50]],
             "stock_outflow_top50": [self._flow_dto(f) for f in sorted([f for f in flows if f.display_signed_flow_yi < 0], key=lambda x: x.display_signed_flow_yi)[:50]],
             "unusual_value_top50": [self._flow_dto(f) for f in sorted(flows, key=lambda x: abs(x.delta_signed_flow_yi), reverse=True)[:50]],

@@ -6,6 +6,7 @@ from datetime import datetime
 
 import httpx
 
+from app.data_provider.static_universe_provider import load_static_universe
 from app.data_provider.twse_provider import parse_number
 from app.storage.models import StockSnapshot
 from app.time_utils import TAIPEI_TZ, ensure_taipei, market_date, taipei_now
@@ -20,6 +21,8 @@ MIS_HEADERS = {
     "Accept": "application/json,text/plain,*/*",
     "Referer": "https://mis.twse.com.tw/stock/index.jsp",
 }
+STATIC_NAME_BY_CODE: dict[str, str] | None = None
+KNOWN_NAME_OVERRIDES = {"2327": "國巨*"}
 
 
 def _chunked(items: list[StockSnapshot], size: int) -> list[list[StockSnapshot]]:
@@ -44,12 +47,24 @@ def _change_pct(price: float, previous_close: float) -> float:
     return (price - previous_close) / previous_close * 100
 
 
+def _display_name(code: str, fallback: str) -> str:
+    if code in KNOWN_NAME_OVERRIDES:
+        return KNOWN_NAME_OVERRIDES[code]
+    global STATIC_NAME_BY_CODE
+    if STATIC_NAME_BY_CODE is None:
+        STATIC_NAME_BY_CODE = {snapshot.code: snapshot.name for snapshot in load_static_universe()}
+    return STATIC_NAME_BY_CODE.get(code) or fallback
+
+
 def _first_book_price(value: object) -> float:
     text = str(value or "").strip()
     if not text or text == "-":
         return 0.0
-    first = text.split("_", 1)[0]
-    return parse_number(first)
+    for part in text.split("_"):
+        price = parse_number(part)
+        if price > 0:
+            return price
+    return 0.0
 
 
 def normalize_mis_item(item: dict, base_snapshot: StockSnapshot, *, now: datetime) -> StockSnapshot | None:
@@ -69,7 +84,14 @@ def normalize_mis_item(item: dict, base_snapshot: StockSnapshot, *, now: datetim
     last_trade_price = parse_number(item.get("z"))
     best_ask = _first_book_price(item.get("a"))
     best_bid = _first_book_price(item.get("b"))
+    limit_up = parse_number(item.get("u"))
+    previous_close = parse_number(item.get("y")) or base_snapshot.previous_close or last_trade_price
+    open_price = parse_number(item.get("o")) or base_snapshot.open or last_trade_price or previous_close
+    high = parse_number(item.get("h")) or max(last_trade_price, open_price)
+    low = parse_number(item.get("l")) or min(last_trade_price or open_price, open_price)
     price = last_trade_price
+    if price <= 0 and high > 0 and limit_up > 0 and abs(high - limit_up) < 0.001:
+        price = high
     if price <= 0:
         # Some active TWSE MIS rows publish the live book while z/tv are "-".
         # In that case the user-visible quote should follow the live best quote,
@@ -78,10 +100,10 @@ def normalize_mis_item(item: dict, base_snapshot: StockSnapshot, *, now: datetim
     if price <= 0:
         return None
 
-    previous_close = parse_number(item.get("y")) or base_snapshot.previous_close or price
-    open_price = parse_number(item.get("o")) or base_snapshot.open or price
-    high = parse_number(item.get("h")) or max(price, open_price)
-    low = parse_number(item.get("l")) or min(price, open_price)
+    previous_close = previous_close or price
+    open_price = open_price or price
+    high = high or max(price, open_price)
+    low = low or min(price, open_price)
     volume_lots = int(parse_number(item.get("v")))
     volume_shares = max(volume_lots, 0) * 1000
     trade_value = price * volume_shares
@@ -92,7 +114,7 @@ def normalize_mis_item(item: dict, base_snapshot: StockSnapshot, *, now: datetim
 
     return base_snapshot.model_copy(
         update={
-            "name": str(item.get("n") or base_snapshot.name).strip() or base_snapshot.name,
+            "name": _display_name(code, base_snapshot.name),
             "market": market,
             "price": price,
             "previous_close": previous_close,

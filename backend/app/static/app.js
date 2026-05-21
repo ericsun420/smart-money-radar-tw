@@ -234,7 +234,7 @@ function topicRankList(title, rows, type, limit = 5) {
     <button class="rank-row" data-topic="${h(row.topic_name)}">
       <span>${index + 1}</span>
       <span>${h(row.topic_name)}</span>
-      <span class="${type === "in" ? "red" : "green"}">${yi(row.net_yi)}</span>
+      <span class="${type === "in" ? "red" : "green"}">${type === "out" ? yi(-Math.abs(Number(row.outflow_yi || row.net_yi || 0))) : yi(row.net_yi)}</span>
       <span class="tiny">⚡ ${Number(row.radar_score || 0)}</span>
     </button>`).join("") : `<div class="rank-empty">暫無符合條件的題材</div>`;
   return `<div><div class="rank-title">${h(title)}</div>${body}</div>`;

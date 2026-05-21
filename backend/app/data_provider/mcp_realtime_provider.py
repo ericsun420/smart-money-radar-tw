@@ -14,6 +14,7 @@ MCP_URL = "https://TW-Stock-MCP-Server.fastmcp.app/mcp"
 QUOTE_HEAD_RE = re.compile(r"^(?P<code>\d{4})\s+(?P<name>.+?)\s+\[(?P<market>.*?)\]$")
 NUMBER_RE = re.compile(r"(-?\d+(?:\.\d+)?)")
 QUOTE_TIME_RE = re.compile(r"(\d{8})\s+(\d{2}:\d{2}:\d{2})")
+KNOWN_NAME_OVERRIDES = {"2327": "國巨*"}
 
 
 def _num(value: str | None) -> float:
@@ -96,7 +97,12 @@ def _merge_quote(line: str, base_by_code: dict[str, StockSnapshot], *, now: date
     high = _num(_segment_number(parts[3]))
     low = _num(_segment_number(parts[4]))
     previous_close = _num(_segment_number(parts[5])) or base.previous_close or raw_price
-    price = raw_price or open_price or previous_close
+    limit_up = _num(_segment_number(parts[7])) if len(parts) > 7 else 0.0
+    price = raw_price
+    if price <= 0 and high > 0 and limit_up > 0 and abs(high - limit_up) < 0.001:
+        price = high
+    if price <= 0:
+        price = open_price or previous_close
     open_price = open_price or price
     high = high or price
     low = low or price
@@ -111,7 +117,7 @@ def _merge_quote(line: str, base_by_code: dict[str, StockSnapshot], *, now: date
     latency = max(int((now - source_ts).total_seconds()), 0)
     return base.model_copy(
         update={
-            "name": data["name"].strip() or base.name,
+            "name": KNOWN_NAME_OVERRIDES.get(code) or data["name"].strip() or base.name,
             "market": base.market,
             "price": price,
             "previous_close": previous_close,
