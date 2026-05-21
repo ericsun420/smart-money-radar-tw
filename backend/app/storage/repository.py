@@ -125,6 +125,14 @@ class InMemoryRepository:
             summary.official_full_count = sum(1 for s in qualified_snapshots.values() if s.data_quality_bucket in {"official_full", "official_intraday"} and s.formal_grade)
             summary.fallback_count = sum(1 for s in qualified_snapshots.values() if s.data_quality_bucket in {"fallback", "seed", "cache_only", "mock", "unit_unknown"})
 
+            flow_snapshots = qualified_snapshots
+            if self.use_provider and is_regular_tw_session(started):
+                flow_snapshots = {
+                    code: snapshot
+                    for code, snapshot in qualified_snapshots.items()
+                    if snapshot.is_intraday and snapshot.market_data_time
+                }
+
             self.stock_flows = {
                 code: infer_direction(
                     snapshot,
@@ -132,7 +140,7 @@ class InMemoryRepository:
                     self.stock_flows.get(code),
                     min_value_delta_yi=self.settings.min_value_delta_yi,
                 )
-                for code, snapshot in qualified_snapshots.items()
+                for code, snapshot in flow_snapshots.items()
             }
             previous_states = dict(self.topic_states)
             topics, next_states = aggregate_topics(

@@ -166,7 +166,7 @@ function stockSummaryCard(detail) {
   const topicList = cleanTopics(detail.topics || [stock.primary_theme, stock.official_industry, ...(stock.themes || [])]);
   const direction = flow.direction || stock.flow_direction || "NEUTRAL";
   const amount = Math.abs(currentFlowAmount(flow));
-  const hasIntradayQuote = Boolean(stock.is_intraday || stock.market_data_time || flow.quote_time);
+  const hasIntradayQuote = Boolean(stock.is_intraday || stock.market_data_time);
   const quoteTime = stock.market_data_time || flow.quote_time;
   const industry = displayIndustryName(stock.official_industry || stock.industry);
   const primaryTheme = displayTopicName(stock.primary_theme || topicList[0], topicList.length ? topicList[0] : "題材資料待補");
