@@ -79,7 +79,7 @@ class InMemoryRepository:
         provider_result = fetch_market_snapshots()
         if provider_result.snapshots:
             self.previous_snapshots = self.snapshots or self.previous_snapshots
-            self.snapshots = {s.code: s for s in provider_result.snapshots}
+            self.snapshots = {s.code: s for s in apply_theme_mappings(provider_result.snapshots)}
         now = taipei_now()
         return ScanDebugSummary(
             scan_started_at=now,
