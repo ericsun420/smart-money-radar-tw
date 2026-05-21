@@ -228,15 +228,25 @@ function renderRecentSearches() {
   });
 }
 
-function topicRankList(title, rows, type, limit = 5) {
+function topicRankList(title, rows, type, limit = 5, fallbackStocks = []) {
   const visibleRows = (rows || []).slice(0, limit);
-  const body = visibleRows.length ? visibleRows.map((row, index) => `
-    <button class="rank-row" data-topic="${h(row.topic_name)}">
+  const topicRows = visibleRows.map((row, index) => `
+    <button class="rank-row" data-topic="${h(row.topic_name)}" data-topic-side="${type}">
       <span>${index + 1}</span>
       <span>${h(row.topic_name)}</span>
       <span class="${type === "in" ? "red" : "green"}">${type === "out" ? yi(-Math.abs(Number(row.outflow_yi || row.net_yi || 0))) : yi(row.net_yi)}</span>
       <span class="tiny">⚡ ${Number(row.radar_score || 0)}</span>
-    </button>`).join("") : `<div class="rank-empty">暫無符合條件的題材</div>`;
+    </button>`);
+  const fillRows = type === "out" && topicRows.length < limit
+    ? (fallbackStocks || []).slice(0, limit - topicRows.length).map((row, offset) => `
+      <button class="rank-row" data-stock="${h(row.code)}">
+        <span>${topicRows.length + offset + 1}</span>
+        <span>${h(row.code)} ${h(row.name)}<small>個股流出</small></span>
+        <span class="green">${yi(-Math.abs(Number(row.stock_flow_proxy_amount || row.display_signed_flow_yi || 0)))}</span>
+        <span class="tiny">${pct(row.change_pct)}</span>
+      </button>`)
+    : [];
+  const body = [...topicRows, ...fillRows].join("") || `<div class="rank-empty">暫無符合條件的題材</div>`;
   return `<div><div class="rank-title">${h(title)}</div>${body}</div>`;
 }
 
@@ -398,7 +408,7 @@ async function loadDashboard() {
     $("rankings").innerHTML = `
       <section class="card"><h2>類股雷達掃描</h2><div class="split">
         ${topicRankList("資金流入 TOP5", rankings.topic_inflow_top50 || [], "in")}
-        ${topicRankList("資金流出 TOP5", rankings.topic_outflow_top50 || [], "out")}
+        ${topicRankList("資金流出 TOP5", rankings.topic_outflow_top50 || [], "out", 5, rankings.stock_outflow_top50 || [])}
       </div></section>
       <section class="card"><h2>每日資金排行榜</h2><div class="split">
         ${stockRankList("個股流入 TOP5", rankings.stock_inflow_top50 || [], "display_signed_flow_yi")}
@@ -507,7 +517,7 @@ async function searchStock(query) {
   }
 }
 
-async function openTopic(topicName) {
+async function openTopic(topicName, side = "net") {
   if (!topicName) return;
   const detail = await getJson(`/api/topics/${encodeURIComponent(topicName)}`);
   if (lastDashboardSnapshotId && detail.snapshot_id && detail.snapshot_id !== lastDashboardSnapshotId) {
@@ -516,37 +526,56 @@ async function openTopic(topicName) {
   }
   const topic = detail.topic_flow;
   const safeTopicName = displayTopicName(topic.topic_name);
-  const titleLine = `【${levelText(topic.signal_level)}】異動 ${safeTopicName} ${directionText(topic.direction)}${directionArrow(topic.direction)} ${timeText(topic.timestamp)}`;
+  const outflowView = side === "out";
+  const inflowView = side === "in";
+  const directionalView = outflowView || inflowView;
+  const viewDirection = outflowView ? "OUTFLOW" : inflowView ? "INFLOW" : topic.direction;
+  const titleLine = `【${levelText(topic.signal_level)}】異動 ${safeTopicName} ${directionText(viewDirection)}${directionArrow(viewDirection)} ${timeText(topic.timestamp)}`;
+  const impactRows = directionalView
+    ? (topic.top_impacts || []).filter((stock) => stock.direction === viewDirection)
+    : (topic.top_impacts || []);
+  const sheetNetLabel = outflowView ? "題材流出" : inflowView ? "題材流入" : "題材淨額";
+  const sheetNetValue = outflowView ? -Math.abs(Number(topic.outflow_yi || 0)) : inflowView ? Number(topic.inflow_yi || 0) : topic.topic_net_proxy_amount;
+  const flowLine = outflowView
+    ? `流出：${yi(topic.outflow_yi, false)}｜題材淨額：${yi(topic.topic_net_proxy_amount)}`
+    : inflowView
+      ? `流入：${yi(topic.inflow_yi, false)}｜題材淨額：${yi(topic.topic_net_proxy_amount)}`
+    : `流入：${yi(topic.inflow_yi, false)}｜流出：${yi(topic.outflow_yi, false)}`;
   $("sheetBody").innerHTML = `
     <div class="sheet-title">
       <h2>${h(titleLine)}</h2>
     </div>
-    <div class="sheet-net ${directionClass(topic.direction)}">題材淨額：${yi(topic.topic_net_proxy_amount)}</div>
-    <div class="sheet-flow">流入：${yi(topic.inflow_yi, false)}｜流出：${yi(topic.outflow_yi, false)}</div>
-    <div class="mode">${h(topic.top5_coverage_label || "")}</div>
+    <div class="sheet-net ${directionClass(viewDirection)}">${h(sheetNetLabel)}：${yi(sheetNetValue)}</div>
+    <div class="sheet-flow">${flowLine}</div>
+    <div class="mode">${outflowView ? "此視窗只列出流出貢獻股" : inflowView ? "此視窗只列出流入貢獻股" : h(topic.top5_coverage_label || "")}</div>
     <hr />
-    <h2>影響力 TOP 5 個股 <small>（點擊查看個股資金異動歷史）</small></h2>
-    ${(topic.top_impacts || []).slice(0, 5).map((stock, index) => {
+    <h2>${outflowView ? "流出影響力 TOP 5 個股" : inflowView ? "流入影響力 TOP 5 個股" : "影響力 TOP 5 個股"} <small>（點擊查看個股資金異動歷史）</small></h2>
+    ${impactRows.slice(0, 5).map((stock, index) => {
       const changeClass = Number(stock.change_pct || 0) >= 0 ? "red" : "green";
       const changeArrow = Number(stock.change_pct || 0) >= 0 ? "↑" : "↓";
       const deltaText = previousChangeText(stock.delta_signed_flow_yi, stock.direction);
+      const contribution = outflowView && Number(topic.outflow_yi || 0) > 0
+        ? Math.abs(Number(stock.stock_flow_proxy_amount || 0)) / Math.abs(Number(topic.outflow_yi || 1))
+        : inflowView && Number(topic.inflow_yi || 0) > 0
+          ? Math.abs(Number(stock.stock_flow_proxy_amount || 0)) / Math.abs(Number(topic.inflow_yi || 1))
+        : Number(stock.contribution_ratio || 0);
       return `<button class="impact-row" data-stock="${h(stock.code)}">
         <span class="impact-rank">${index + 1}.</span>
         <span class="impact-main"><b>${h(stock.code)} ${h(stock.name)}</b>
           <small class="${changeClass}">${changeArrow} ${pct(stock.change_pct)}　${stock.price}</small>
-          <small class="${directionClass(stock.direction)}">${directionText(stock.direction).replace("資金", "")} ${yi(Math.abs(stock.stock_flow_proxy_amount), false)}　佔${Number((stock.contribution_ratio || 0) * 100).toFixed(0)}%</small>
+          <small class="${directionClass(stock.direction)}">${directionText(stock.direction).replace("資金", "")} ${yi(Math.abs(stock.stock_flow_proxy_amount), false)}　佔${Number(contribution * 100).toFixed(0)}%</small>
           ${deltaText ? `<small class="${directionClass(stock.direction)}">${h(deltaText)}</small>` : ""}
         </span>
         <span class="arrow">›</span>
       </button>`;
-    }).join("")}`;
+    }).join("") || `<div class="empty">此題材目前沒有可列出的${outflowView ? "流出" : inflowView ? "流入" : ""}貢獻股。</div>`}`;
   $("sheet").classList.remove("hidden");
   bindClicks();
 }
 
 function bindClicks() {
   document.querySelectorAll("[data-topic]").forEach((element) => {
-    element.onclick = () => openTopic(element.dataset.topic);
+    element.onclick = () => openTopic(element.dataset.topic, element.dataset.topicSide || "net");
   });
   document.querySelectorAll("[data-stock]").forEach((element) => {
     element.onclick = () => {
