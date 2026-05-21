@@ -81,10 +81,18 @@ async def fetch_official_snapshots_async() -> ProviderResult:
         errors.append(f"tpex:{type(exc).__name__}")
 
     daily_snapshots, excluded_count = filter_common_stocks([*twse_snapshots, *tpex_snapshots])
+    use_intraday_overlay = not _prefer_official_close(now)
+    if use_intraday_overlay and len(daily_snapshots) < 1500:
+        static_snapshots, static_excluded_count = filter_common_stocks(load_static_universe())
+        existing_codes = {snapshot.code for snapshot in daily_snapshots}
+        supplements = [snapshot for snapshot in static_snapshots if snapshot.code not in existing_codes]
+        if supplements:
+            daily_snapshots = [*daily_snapshots, *supplements]
+            excluded_count += static_excluded_count
+            errors.append(f"static_universe_used_for_intraday_quote_base:{len(supplements)}")
     daily_snapshots = apply_theme_mappings(daily_snapshots)
     realtime_snapshots: list[StockSnapshot] = []
     realtime_errors: list[str] = []
-    use_intraday_overlay = not _prefer_official_close(now)
     if daily_snapshots and not use_intraday_overlay:
         daily_snapshots = _stamp_official_close_snapshots(daily_snapshots, now)
     if daily_snapshots and use_intraday_overlay:
