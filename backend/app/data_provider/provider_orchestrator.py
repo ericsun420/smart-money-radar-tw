@@ -205,11 +205,15 @@ def fetch_mcp_proxy_snapshots() -> ProviderResult:
             errors=["static_universe_empty"],
         )
     try:
-        return asyncio.run(fetch_mcp_realtime_quotes(base))
+        result = asyncio.run(fetch_mcp_realtime_quotes(base))
+        result.snapshots = apply_theme_mappings(result.snapshots)
+        return result
     except RuntimeError:
         loop = asyncio.new_event_loop()
         try:
-            return loop.run_until_complete(fetch_mcp_realtime_quotes(base))
+            result = loop.run_until_complete(fetch_mcp_realtime_quotes(base))
+            result.snapshots = apply_theme_mappings(result.snapshots)
+            return result
         except Exception as exc:
             return ProviderResult(
                 snapshots=[],
